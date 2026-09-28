@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" role="img" aria-label="ELECTRAL illustration">
+<rect width="240" height="160" rx="14" fill="#f4f8fa"/>
+<ellipse cx="120" cy="138" rx="79" ry="9" fill="#e2e8f0"/>
+<rect x="33" y="27" width="174" height="108" rx="6" fill="white" stroke="#cbd5e1"/>
+<path d="M33 33 Q33 27 39 27 H201 Q207 27 207 33 V53 H33Z" fill="#db2777"/>
+<text x="46" y="44" fill="white" font-family="Arial" font-size="10">SIRU · DEMO</text>
+<text x="46" y="78" fill="#db2777" font-family="Arial" font-weight="bold" font-size="18">ELECTRAL</text>
+<text x="46" y="97" fill="#475569" font-family="Arial" font-size="12">POWDER</text>
+<text x="46" y="120" fill="#64748b" font-family="Arial" font-size="10">21.8 g SACHET</text>
+</svg>
