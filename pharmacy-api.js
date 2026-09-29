@@ -236,12 +236,24 @@ const pharmacyApi = {
     if (location?.lat != null) console.info('siru: turn sent with location');
     else console.info('siru: turn sent without coordinates - nearest-pharmacy answers will ask for a location');
     const turn = await concierge.turn({
-      session_id:sessionId, user_id:userId, locale:currentProfile().language_code, channel:'chat',
+      session_id:sessionId, user_id:userId, channel:'chat',
       input:{type:'text', text:input}, history, context:{location},
     }, onStep);
     return {command_id:commandId, user_id:userId, session_id:sessionId, source:'text', text,
       message:turn.text || 'The assistant returned no response. Check your cart before trying again.',
       trace:turn.trace, cards:turn.cards};
+  },
+  // A photo (a prescription or a medicine's pack) as a streamed turn
+  // (POST /v1/concierge/turn, input.type "upload"): read by the vision model
+  // on the server, the medicines read clearly are looked up in the catalog,
+  // and the turn's trace - tools, tables - reaches the inspector like any turn.
+  async photo(imageB64, mimeType, onStep = null) {
+    if (this.mode !== 'sandbox') throw new Error('Connect to the pharmacy first.');
+    const turn = await concierge.turn({
+      session_id:shoppingSessionId, user_id:getUserId(), channel:'chat',
+      input:{type:'upload', image_b64:imageB64, mime_type:mimeType}, history:[], context:{},
+    }, onStep);
+    return {message:turn.text || "The photo couldn't be read. Please try again.", trace:turn.trace, cards:turn.cards};
   },
   // What Siru remembers about the signed-in user (GET /v1/memory/me). Per
   // user, not per session: a new chat session doesn't change it.

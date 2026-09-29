@@ -118,9 +118,15 @@ el.askForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (shop.busy) return;
   const userInput = el.askInput.value.trim();
-  if (!userInput) return;
+  // A photo waiting above the input (pasted or picked) goes first, then any typed text.
+  const photo = photoPending?.file || null;
+  if (!userInput && !photo) return;
   el.askInput.value = "";
-  await shoppingSubmit(userInput);
+  if (photo) {
+    photoClear();
+    await shoppingSendPhoto(photo);
+  }
+  if (userInput) await shoppingSubmit(userInput);
 });
 
 function renderAskResult(data) {
@@ -179,8 +185,7 @@ const buyerVoiceSurface = {
   },
   // chat_session_id: the session the typed chat is in, so a spoken turn and a
   // typed one belong to one conversation (worker: conversation_id).
-  sessionQuery: () => `&preferred_language=${encodeURIComponent(currentProfile().language_code)}`
-    + (shoppingSessionId ? `&chat_session_id=${encodeURIComponent(shoppingSessionId)}` : ''),
+  sessionQuery: () => (shoppingSessionId ? `&chat_session_id=${encodeURIComponent(shoppingSessionId)}` : ''),
   body() {
     // The location verified once at sign-in (location.js) goes with the
     // session - in the body, never the URL - for spoken "nearest pharmacy" answers.
@@ -462,9 +467,10 @@ async function startVoiceSession() {
     agentJoined = agentJoined || room.remoteParticipants.size > 0;
     setTimeout(async () => {
       if (room !== voiceRoom || agentJoined || room.remoteParticipants.size > 0) return;
-      // LiveKit dispatches a room's assistant once and never again: a call
-      // started while the previous one was still ending could be left without
-      // one ("no servers available"). A new room is a new dispatch - once.
+      // LiveKit dispatches a room's assistant once and never again: when no
+      // worker took it (none running, or LiveKit refused one that reported
+      // itself busy - "no servers available") the room stays without one.
+      // A new room is a new dispatch - once.
       if (!voiceJoinRetried) {
         voiceJoinRetried = true;
         voiceLog('assistant not joined - retrying once in a new room');

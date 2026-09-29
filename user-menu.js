@@ -1,8 +1,8 @@
 // Sign-in screen and the signed-in user's menu (users.js holds the session).
 const loginEl = Object.fromEntries([
   'loginView', 'appView', 'loginForm', 'loginEmail', 'loginPassword', 'loginError', 'loginBtn',
-  'userMenu', 'currentUserAvatar', 'currentUserName', 'currentUserLanguage', 'currentUserEmail',
-  'languageSelect', 'logoutBtn', 'merchantView', 'brandSub',
+  'userMenu', 'currentUserAvatar', 'currentUserName', 'currentUserRole', 'currentUserEmail',
+  'logoutBtn', 'merchantView', 'brandSub',
   'demoMerchants', 'demoMerchantsNote', 'demoMerchantSelect', 'demoMerchantBtn', 'demoMerchantError',
 ].map(id => [id, document.getElementById(id)]));
 let authExpiryTimer = null;
@@ -27,10 +27,9 @@ function renderCurrentUser() {
   }
   loginEl.currentUserName.textContent = user?.name || '';
   loginEl.currentUserAvatar.textContent = user?.avatar || '';
-  loginEl.currentUserLanguage.textContent = !user ? '' : merchantUser ? 'Merchant account' : `Replies in ${user.language}`;
+  // No language to choose: every message is answered in its own language.
+  loginEl.currentUserRole.textContent = merchantUser ? 'Merchant account' : '';
   loginEl.currentUserEmail.textContent = user?.email || '';
-  loginEl.languageSelect.value = user?.language_code || 'en-IN';
-  loginEl.languageSelect.closest('label').hidden = merchantUser;
   loginEl.brandSub.textContent = merchantUser ? 'Merchant assistant' : 'AI pharmacy assistant';
   document.title = merchantUser ? 'Siru Merchant — Store dashboard' : 'Siru Pharmacy — AI Assistant';
   el.micBtn.disabled = !user || merchantUser;
@@ -202,15 +201,8 @@ loginEl.demoMerchantBtn?.addEventListener('click', async () => {
   }
 });
 
-for (const language of ASSISTANT_LANGUAGES) {
-  const option = document.createElement('option');
-  option.value = language.code;
-  option.textContent = language.label;
-  loginEl.languageSelect.append(option);
-}
 // The profile menu is a <details>: it stayed open over the page until its own
-// summary was clicked again. It closes on a click elsewhere, on Escape and
-// once the language is chosen.
+// summary was clicked again. It closes on a click elsewhere and on Escape.
 document.addEventListener('click', event => {
   if (loginEl.userMenu.open && !loginEl.userMenu.contains(event.target)) loginEl.userMenu.open = false;
 });
@@ -221,17 +213,6 @@ document.addEventListener('keydown', event => {
   }
 });
 
-loginEl.languageSelect.addEventListener('change', async () => {
-  loginEl.userMenu.open = false;
-  if (!getUserId()) return;
-  userWrite(`siru_language_${getUserId()}`, loginEl.languageSelect.value);
-  renderCurrentUser();
-  // The voice session was started in the old language: the next tap uses the new one.
-  if (voiceRoom) {
-    await stopVoiceSession();
-    setVoiceStatus('Language changed. Tap the mic to talk again.');
-  }
-});
 loginEl.logoutBtn.onclick = () => signOut();
 
 renderCurrentUser();

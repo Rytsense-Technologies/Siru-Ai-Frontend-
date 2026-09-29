@@ -3,12 +3,6 @@
 // chat, cart, orders and the voice room all belong to that user. The token is
 // kept for this tab only (sessionStorage) and dropped when it expires.
 const SESSION_KEY = 'siru_session';
-const ASSISTANT_LANGUAGES = [
-  {code:'en-IN', label:'English'},
-  {code:'ta-IN', label:'Tamil'},
-  {code:'hi-IN', label:'Hindi'},
-  {code:'te-IN', label:'Telugu'},
-];
 const userMemory = new Map();
 function userRead(key, fallback = null, storage = localStorage) {
   try { return JSON.parse(storage.getItem(key)) ?? userMemory.get(key) ?? fallback; }
@@ -47,16 +41,16 @@ function authSave(session) {
 function initials(name) {
   return String(name || '?').split(/[\s._@-]+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
 }
-function userLanguage(id) {
-  const code = userRead(`siru_language_${id}`, 'en-IN');
-  return ASSISTANT_LANGUAGES.find(l => l.code === code) || ASSISTANT_LANGUAGES[0];
-}
+// No assistant language is chosen or kept: the backend answers each message
+// in the language it is written or spoken in. A choice saved by an older page
+// (siru_language_<user>) is dropped.
+try {
+  for (const key of Object.keys(localStorage)) if (key.startsWith('siru_language_')) localStorage.removeItem(key);
+} catch {}
 function currentProfile() {
   if (!authSession) return null;
   const {id, name, email} = authSession.user;
-  const language = userLanguage(id);
-  return {id, name: name || email, email, role: currentRole(), language: language.label, language_code: language.code,
-    avatar: initials(name || email)};
+  return {id, name: name || email, email, role: currentRole(), avatar: initials(name || email)};
 }
 
 // Chat is per user AND per session. Signing in starts a new session, so the

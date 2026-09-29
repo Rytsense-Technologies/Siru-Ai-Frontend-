@@ -814,8 +814,22 @@ function actionOutcome(data) {
   return again + 'Done.';
 }
 
+// A decided Confirm card's outcome, kept on the card in this chat's saved history:
+// redrawn after a reload it shows what happened, not live Confirm / Cancel buttons
+// for an action that was already decided.
+function confirmCardSettle(actionId, text) {
+  const owner = getUserId();
+  if (!owner || !actionId) return;
+  for (const record of userHistory(owner)) {
+    const card = (record.cards || []).find(c => c?.kind === 'confirm_action' && c.actionId === actionId);
+    if (!card) continue;
+    card.settled = text;
+    userSaveMessage(owner, record);
+  }
+}
+
 // Something SIRU prepared (an order, booking, payment request or refill):
-// nothing happens until the user taps Confirm here (POST /v1/actions/{id}/confirm).
+// nothing happens until the user taps Confirm here (a traced "tap" turn -> actions.confirm).
 function shoppingConfirmCard(card, time) {
   const {entry} = chatEntry({label: 'Needs your OK', time, className: 'card-entry'});
   const box = el_('div', 'chat-card confirm-card');
@@ -826,21 +840,44 @@ function shoppingConfirmCard(card, time) {
     line.append(el_('span', '', row.label), el_('strong', '', row.value));
     box.append(line);
   }
-  const status = el_('p', 'card-note', 'Nothing is done until you tap Confirm.');
+  const status = el_('p', 'card-note', card.settled || 'Nothing is done until you tap Confirm.');
+  if (card.settled) {  // decided earlier in this chat: its outcome, no buttons
+    box.append(status);
+    entry.append(box);
+    return entry;
+  }
   const actions = el_('div', 'confirm-actions');
   const decide = async (decision, button) => {
     actions.querySelectorAll('button').forEach(b => { b.disabled = true; });
     button.textContent = decision === 'confirm' ? 'Confirming…' : 'Cancelling…';
     try {
-      const data = await apiFetch(`/v1/actions/${encodeURIComponent(card.actionId)}/${decision}`, {method: 'POST'});
+      // The decision as a traced turn (POST /v1/concierge/turn, input.type "tap" -> actions.confirm /
+      // cancel): what it did - the order written to this app's own records - reaches the inspector
+      // like any turn's tools and tables. Same outcome as POST /v1/actions/{id}/{decision}.
+      const answer = await concierge.turn({session_id: shoppingSessionId, user_id: getUserId(), channel: 'chat',
+        input: {type: 'tap', action_id: card.actionId, decision}, history: [], context: {}});
+      const data = answer.cards.find(c => c.kind === 'action_result') || null;
+      shoppingActivityAdd({id: crypto.randomUUID(), record: {
+        user: `${decision === 'confirm' ? 'Confirm' : 'Cancel'}: ${card.title || 'prepared action'}`, source: 'text',
+        reply: answer.text, cards: answer.cards}}, answer.trace);
+      activityCounts();
+      if (!data) {
+        // Refused (already decided, expired, not this user's): nothing to retry - say why.
+        status.textContent = `${answer.text.replace(/\.$/, '')}. Nothing more was done.`;
+        actions.remove();
+        confirmCardSettle(card.actionId, status.textContent);
+        return;
+      }
       status.textContent = decision === 'confirm' ? actionOutcome(data) : 'Cancelled. Nothing was done.';
       actions.remove();
+      confirmCardSettle(card.actionId, status.textContent);
       shoppingRefresh();
     } catch (err) {
       // Already decided or expired (409/410): nothing to retry - say why.
       if (err.status === 409 || err.status === 410 || err.status === 404) {
         status.textContent = `${err.message.replace(/^\d+\s*/, '')}. Nothing more was done.`;
         actions.remove();
+        confirmCardSettle(card.actionId, status.textContent);
         return;
       }
       status.textContent = `Couldn't ${decision}: ${pharmacyError(err)}`;
@@ -1839,17 +1876,24 @@ shopEl.activityClose.onclick = () => shopEl.activityPanel.classList.remove('open
 
 // A voice turn's memory result, which arrives after the reply (the worker
 // saves in the background): add it to that turn's log and update the tab.
-function shoppingMemoryEvent({turn_id, status = 'saved', count = 0}) {
-  const step = {kind: 'memory', status: status === 'failed' ? 'error' : 'done', count,
-    name: status === 'failed' ? 'save failed' : (count ? 'saved' : 'nothing new')};
+function shoppingMemoryEvent({turn_id, status = 'saved', count = 0, short_term = null}) {
+  // Long-term memory (the app database): what the turn taught, if anything.
+  const steps = [{kind: 'memory', status: status === 'failed' ? 'error' : 'done', count,
+    name: status === 'failed' ? 'save failed' : (count ? 'saved' : 'nothing new'),
+    tables_written: status !== 'failed' && count ? ['long_term_memories'] : []}];
+  // Short-term memory (Redis): the turn joined this conversation's recent turns - as a typed turn's does.
+  if (short_term === 'saved' || short_term === 'failed') {
+    steps.push({kind: 'memory', store: 'redis', status: short_term === 'saved' ? 'done' : 'error',
+      name: short_term === 'saved' ? 'short-term saved' : 'short-term save failed'});
+  }
   const saved = userRead(activityKey(), []);
   const item = saved.find(entry => entry.turn_id === turn_id);
   if (item) {
-    item.trace.steps = [...(item.trace.steps || []), step];
+    item.trace.steps = [...(item.trace.steps || []), ...steps];
     userWrite(activityKey(), saved);
   }
-  shopEl.activityList.querySelector(`.agent-activity[data-turn-id="${CSS.escape(turn_id)}"] .trace-rows`)
-    ?.append(activityStep(step));
+  const rows = shopEl.activityList.querySelector(`.agent-activity[data-turn-id="${CSS.escape(turn_id)}"] .trace-rows`);
+  for (const step of steps) rows?.append(activityStep(step));
   if (count) memoryRefresh();
 }
 
@@ -2062,8 +2106,7 @@ async function shoppingOpenSession() {
   if (!owner) return;
   let data;
   try {
-    data = await apiFetch('/v1/concierge/open', {method: 'POST', body: JSON.stringify({
-      locale: currentProfile().language_code})});
+    data = await apiFetch('/v1/concierge/open', {method: 'POST', body: JSON.stringify({})});
   } catch {
     return;  // an older API without the route - nothing to bring up
   }
@@ -2081,42 +2124,99 @@ async function shoppingOpenSession() {
   }
 }
 
-const rxEl = {button: document.getElementById('rxBtn'), file: document.getElementById('rxFile')};
+const rxEl = {button: document.getElementById('rxBtn'), file: document.getElementById('rxFile'),
+  preview: document.getElementById('attachPreview'), img: document.getElementById('attachImg'),
+  name: document.getElementById('attachName'), remove: document.getElementById('attachRemove')};
+// The photo types the server reads (prescriptions/extract.py ALLOWED_MIME_TYPES) and its size limit.
+const PHOTO_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic']);
+const PHOTO_MAX_BYTES = 8 * 1024 * 1024;
+// The photo waiting to be sent (pasted or picked), shown above the input until Send - or removed.
+let photoPending = null;
 
-// A prescription photo -> a draft a pharmacist reviews
-// (POST /v1/concierge/prescriptions/extract). Nothing is ordered from it.
-async function shoppingPrescriptionPhoto(file) {
+function photoAttach(file) {
+  if (!file) return;
+  if (!PHOTO_TYPES.has(file.type)) {
+    shoppingNotice(`That file can't be read (${file.type || 'unknown type'}). Please attach a JPEG, PNG, WebP or HEIC photo.`);
+    return;
+  }
+  if (file.size > PHOTO_MAX_BYTES) {
+    shoppingNotice('That photo is larger than 8 MB. Please attach a smaller one.');
+    return;
+  }
+  photoClear();
+  photoPending = {file, url: URL.createObjectURL(file)};
+  rxEl.img.src = photoPending.url;
+  rxEl.name.textContent = file.name && file.name !== 'image.png' ? file.name : 'Pasted photo';
+  rxEl.preview.hidden = false;
+  // Send works with only the photo: no typed text needed.
+  el.askInput.required = false;
+  el.askInput.focus();
+}
+
+function photoClear() {
+  if (photoPending?.url) URL.revokeObjectURL(photoPending.url);
+  photoPending = null;
+  rxEl.img.removeAttribute('src');
+  rxEl.preview.hidden = true;
+  el.askInput.required = true;
+}
+
+// A photo (a prescription, or a medicine's pack) as a turn: read on the server,
+// the medicines read clearly looked up in the catalog - the reply, its cards
+// and its trace like any turn. Nothing is ordered from it.
+async function shoppingSendPhoto(file) {
   if (!file || shop.busy || !getUserId()) return;
+  const generation = shop.generation;
   const turnId = crypto.randomUUID();
+  shoppingEnsureSession();
   shop.busy = true;
   shoppingControls();
-  shoppingTurn(turnId, {userText: `Prescription photo (${file.name})`, source: 'text'});
+  const turn = shoppingTurn(turnId, {userText: `Photo: ${file.name && file.name !== 'image.png' ? file.name : 'pasted photo'}`,
+    source: 'text'});
+  const live = activityLiveStart(turn);
   try {
-    if (file.size > 8 * 1024 * 1024) throw new Error('That photo is larger than 8 MB. Please send a smaller one.');
     const image = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
       reader.onerror = () => reject(new Error("The photo couldn't be read."));
       reader.readAsDataURL(file);
     });
-    const data = await apiFetch('/v1/concierge/prescriptions/extract', {method: 'POST', body: JSON.stringify({
-      image_b64: image, mime_type: file.type || 'image/jpeg', save: true})});
-    shoppingTurnFinish(turnId, {reply: data.reply, cards: [{kind: 'rx_draft', items: data.extraction.items,
-      prescription: data.saved?.prescription || null}]});
+    const result = await pharmacyApi.photo(image, file.type, step => {
+      activityLiveStep(live, step);
+      turnActivityStep(turn, step);
+    });
+    activityLiveEnd(live);
+    if (generation !== shop.generation) return;
+    await shoppingTurnFinish(turnId, {status: 'answered', reply: result.message, agent: result.trace?.agent,
+      trace: result.trace, cards: result.cards});
   } catch (err) {
-    shoppingTurnFinish(turnId, {status: 'failed', reply: `Couldn't read that prescription. ${pharmacyError(err)}`});
+    activityLiveEnd(live);
+    if (generation !== shop.generation) return;
+    const trace = Array.isArray(err.steps) && err.steps.length ? failedTrace(err, turn) : null;
+    shoppingTurnFinish(turnId, {status: 'failed', reply: `Couldn't read that photo. ${pharmacyError(err)}`, trace});
   } finally {
-    shop.busy = false;
-    shoppingControls();
+    if (generation === shop.generation) {
+      shop.busy = false;
+      shoppingControls();
+    }
   }
 }
+
 if (rxEl.button) {
   rxEl.button.onclick = () => rxEl.file.click();
   rxEl.file.onchange = () => {
     const [file] = rxEl.file.files;
     rxEl.file.value = '';
-    shoppingPrescriptionPhoto(file);
+    photoAttach(file);
   };
+  rxEl.remove.onclick = () => { photoClear(); el.askInput.focus(); };
+  // Ctrl+V of an image into the message box attaches it (a pasted text stays text).
+  el.askInput.addEventListener('paste', event => {
+    const item = [...(event.clipboardData?.items || [])].find(i => i.kind === 'file' && i.type.startsWith('image/'));
+    if (!item) return;
+    event.preventDefault();
+    photoAttach(item.getAsFile());
+  });
 }
 
 shopEl.clearCartBtn.onclick = () => shoppingSubmit("Clear cart");

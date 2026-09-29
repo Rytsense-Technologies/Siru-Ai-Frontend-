@@ -195,19 +195,30 @@ class PageStructureTest(unittest.TestCase):
             self.assertEqual(store_name.findall(script.read_text(encoding="utf-8")), [], script.name)
 
     def test_the_profile_menu_closes_like_a_menu(self):
-        """The profile menu (with the assistant language) is a <details>: it
-        stayed open over the page. It closes on a click elsewhere, on Escape
-        and once a language is chosen - and never runs off a small screen."""
+        """The profile menu is a <details>: it stayed open over the page. It
+        closes on a click elsewhere and on Escape - and never runs off a
+        small screen."""
         menu = (FRONTEND / "user-menu.js").read_text(encoding="utf-8")
         self.assertIn("!loginEl.userMenu.contains(event.target)) loginEl.userMenu.open = false;", menu)
         self.assertIn("event.key === 'Escape' && loginEl.userMenu.open", menu)
-        self.assertRegex(menu, r"languageSelect\.addEventListener\('change', async \(\) => \{\s+loginEl\.userMenu\.open = false;")
         css = (FRONTEND / "style.css").read_text(encoding="utf-8")
         self.assertIn("width: min(320px, calc(100vw - 24px)); max-height: calc(100vh - 80px); overflow-y: auto;", css)
+
+    def test_there_is_no_language_to_choose(self):
+        """Siru answers each message in the language it is written or spoken
+        in (backend: supervisor reply_language, voice STT): no assistant
+        language selector, no "Replies in ..." line, no saved choice, and no
+        chosen language sent with a chat turn or a voice session."""
         page = _page()
-        for language in ("en-IN", "ta-IN", "hi-IN", "te-IN"):
-            self.assertIn(f"code:'{language}'", (FRONTEND / "users.js").read_text(encoding="utf-8"))
-        self.assertIn("languageSelect", page.ids)
+        self.assertNotIn("languageSelect", page.ids)
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("Assistant language", html)
+        scripts = {p.name: p.read_text(encoding="utf-8") for p in FRONTEND.glob("*.js")}
+        for name, source in scripts.items():
+            for obsolete in ("ASSISTANT_LANGUAGES", "userLanguage(", "Replies in ", "languageSelect",
+                             "preferred_language", "locale:currentProfile", "language_code: language"):
+                self.assertNotIn(obsolete, source, f"{name}: {obsolete}")
+        self.assertIn("key.startsWith('siru_language_')) localStorage.removeItem(key)", scripts["users.js"])
 
     def test_voice_listens_only_once_the_assistant_has_joined(self):
         """Speech before the voice worker joins the room is heard by nobody:
@@ -234,6 +245,44 @@ class PageStructureTest(unittest.TestCase):
                       "/v1/pharmacy/orders/"):
             self.assertIn(route, joined)
 
+
+    def test_a_photo_is_previewed_and_sent_only_on_send(self):
+        """A pasted (Ctrl+V) or picked photo waits above the input - with a
+        remove button - and goes only on Send, as a streamed turn (the
+        inspector sees its tools and tables). Unsupported or oversized files
+        are refused with a message. It used to go at once, with no preview,
+        to a prescription-only endpoint, and a paste did nothing."""
+        page = _page()
+        for element in ("attachPreview", "attachImg", "attachRemove", "rxFile"):
+            self.assertIn(element, page.ids)
+        shopping = (FRONTEND / "shopping.js").read_text(encoding="utf-8")
+        self.assertIn("el.askInput.addEventListener('paste'", shopping)
+        self.assertIn("i.kind === 'file' && i.type.startsWith('image/')", shopping)
+        self.assertIn("photoAttach(item.getAsFile())", shopping)
+        self.assertIn("rxEl.file.onchange = () => {", shopping)
+        self.assertRegex(shopping, r"rxEl\.file\.onchange = \(\) => \{[^}]*photoAttach\(file\);")
+        self.assertIn("const PHOTO_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic']);", shopping)
+        self.assertIn("if (!PHOTO_TYPES.has(file.type))", shopping)
+        self.assertIn("if (file.size > PHOTO_MAX_BYTES)", shopping)
+        self.assertIn("rxEl.remove.onclick = () => { photoClear();", shopping)
+        api = (FRONTEND / "pharmacy-api.js").read_text(encoding="utf-8")
+        self.assertIn("input:{type:'upload', image_b64:imageB64, mime_type:mimeType}", api)
+        self.assertNotIn("/v1/concierge/prescriptions/extract", shopping)
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+        self.assertIn("const photo = photoPending?.file || null;", app)
+        self.assertIn("await shoppingSendPhoto(photo);", app)
+
+    def test_a_confirm_is_a_traced_turn_and_its_outcome_survives_a_reload(self):
+        """Confirm / Cancel on a prepared action go as a "tap" turn, so the
+        order it writes (this app's own records) shows in the inspector - the
+        REST call left no trace. The outcome is kept on the card in the chat's
+        history: after a reload a decided card shows it, not live buttons."""
+        shopping = (FRONTEND / "shopping.js").read_text(encoding="utf-8")
+        self.assertIn("input: {type: 'tap', action_id: card.actionId, decision}", shopping)
+        self.assertIn("answer.cards.find(c => c.kind === 'action_result')", shopping)
+        self.assertIn("shoppingActivityAdd({id: crypto.randomUUID(), record: {", shopping)
+        self.assertEqual(shopping.count("confirmCardSettle(card.actionId, status.textContent);"), 3)
+        self.assertIn("if (card.settled) {  // decided earlier in this chat: its outcome, no buttons", shopping)
 
 if __name__ == "__main__":
     unittest.main()
