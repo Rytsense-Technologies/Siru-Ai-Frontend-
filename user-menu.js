@@ -18,8 +18,10 @@ function renderCurrentUser() {
   loginEl.userMenu.hidden = !user;
   el.notifBell.hidden = !user || merchantUser;
   document.getElementById('ordersBtn').hidden = !user || merchantUser;
+  // Location | Nearby | Cart | Orders in the top bar: buyers only.
+  document.getElementById('contextRow').hidden = !user || merchantUser;
   if (!user || merchantUser) {
-    for (const id of ['ordersDialog', 'shopDialog', 'orderDialog']) document.getElementById(id).close();
+    for (const id of ['ordersDialog', 'shopDialog', 'orderDialog', 'cartDialog']) document.getElementById(id).close();
     el.notifPanel.hidden = true;
   }
   loginEl.currentUserName.textContent = user?.name || '';
@@ -44,21 +46,17 @@ async function applySignedInUser() {
   if (authSession) authExpiryTimer = setTimeout(authExpired, Math.max(0, authSession.expires_at * 1000 - Date.now()));
   loginEl.userMenu.open = false;
   el.askInput.value = '';
-  el.emailInput.value = '';
-  el.phoneInput.value = '';
   el.notifList.replaceChildren();
   el.toastContainer.replaceChildren();
   el.notifPanel.hidden = true;
   knownNotifiedIds = null;
   setNotifCount(0);
-  setChannelPill(el.emailChannelPill, false);
-  setChannelPill(el.phoneChannelPill, false);
   renderCurrentUser();
   merchantApplyUser();
-  // A merchant never starts the pharmacy page (cart, location, contacts...).
+  // A merchant never starts the pharmacy page (cart, location, voice...).
   if (isMerchant()) return;
   await shoppingResetUser();
-  if (getUserId()) { refreshContactStatus(); refreshNotifications(); locationStart(getUserId()); }
+  if (getUserId()) { refreshNotifications(); locationStart(getUserId()); }
 }
 
 async function signOut(message = '') {

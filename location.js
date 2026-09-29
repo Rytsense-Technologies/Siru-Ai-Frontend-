@@ -155,9 +155,9 @@ function locationFromPosition(position) {
     timestamp: Number.isFinite(position.timestamp) ? position.timestamp : Date.now(),
     label: 'Current location', address: '', pincode: '',
   };
-  // Rounded as it is sent (~100 m): what the pharmacy ranking will use.
-  console.info('siru: browser location received', {lat: place.lat, lng: place.lng, accuracy_m: place.accuracy,
-    at: new Date(place.timestamp).toISOString()});
+  // That a location arrived and how precise it is - never the coordinates
+  // (the console is visible to anyone at the screen, and to extensions).
+  console.info('siru: browser location received', {accuracy_m: place.accuracy, at: new Date(place.timestamp).toISOString()});
   return place;
 }
 

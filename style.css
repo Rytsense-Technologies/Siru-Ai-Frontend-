@@ -23,7 +23,7 @@
 .user-options { position: absolute; right: 0; top: 100%; width: min(320px, 85vw); padding: 10px; background: white; color: #1d2733; border: 1px solid #e1e5ea; border-radius: 12px; box-shadow: 0 8px 30px #0002; z-index: 100; }
 .user-options button { display: block; width: 100%; padding: 12px; border: 0; border-radius: 6px; background: white; color: #1d2733; text-align: left; cursor: pointer; }
 .user-options button:hover { background: #f0fdfa; }
-@media (max-width: 600px) { .topbar-inner { flex-wrap: wrap; gap: 12px; } .topbar-inner h1 { width: 100%; } }
+@media (max-width: 600px) { .topbar-inner { flex-wrap: wrap; gap: 12px; } }
 
 /* Medicine shopping demo */
 .content { max-width: 1200px !important; }
@@ -44,7 +44,7 @@
 .product-qty { width: 60px; padding: 6px; border: 1px solid var(--border); border-radius: 6px; }
 .add-product, #placeOrderBtn { width: 100%; background: #0f766e; color: white; padding: 10px; border: 0; border-radius: 8px; cursor: pointer; }
 .shopping-workspace { display: grid; grid-template-columns: 1.25fr 1fr; gap: 20px; align-items: start; }
-.chat-card, .cart-card { min-width: 0; }
+.chat-card { min-width: 0; }
 .selected-medicine { background: #f0fdfa; border-radius: 8px; padding: 10px; font-size: 12px; color: #115e59; }
 .chat-messages { min-height: 230px; max-height: 400px; overflow-y: auto; padding: 8px 0; display: flex; flex-direction: column; gap: 10px; }
 .chat-bubble { max-width: 92%; align-self: flex-start; background: #f1f5f9; border-radius: 12px 12px 12px 2px; padding: 12px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -263,18 +263,6 @@ body {
   margin-top: 2px;
 }
 
-.channels-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px dashed var(--border);
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-
 .muted.small {
   margin: 0;
   font-size: 0.72rem;
@@ -287,30 +275,7 @@ body {
   border-radius: 4px;
 }
 
-/* ---------- Your Info card ---------- */
-
-.info-grid {
-  margin-top: 14px;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-}
-
-.info-field label {
-  display: block;
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 6px;
-}
-
-.info-field input {
-  width: 100%;
-  padding: 9px 11px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 0.85rem;
-}
+/* ---------- a field with its button (the login's server address) ---------- */
 
 .info-field-row {
   display: flex;
@@ -320,26 +285,6 @@ body {
 
 .info-field-row input {
   flex: 1;
-}
-
-@media (max-width: 700px) {
-  .info-grid { grid-template-columns: 1fr; }
-}
-
-.channel {
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-weight: 600;
-}
-
-.channel.active {
-  background: var(--green-bg);
-  color: var(--green);
-}
-
-.channel.disabled {
-  background: var(--bg);
-  color: var(--muted);
 }
 
 /* ---------- Main content ---------- */
@@ -680,9 +625,6 @@ body {
 .bill-line { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
 .bill-total { border-top: 1px solid var(--border); padding-top: 8px; font-weight: 700; }
 .bill-empty { margin: 0; font-size: 13px; color: var(--muted); }
-.bill-stale-note { display: none; margin: 0; font-size: 11px; color: var(--muted); }
-.bill-card.stale { opacity: 0.6; }
-.bill-card.stale .bill-stale-note { display: block; }
 
 /* Sign-in */
 .login-view { min-height: calc(100vh - 140px); display: grid; place-items: center; padding: 32px 16px; }
@@ -767,13 +709,10 @@ body {
 .card-note { margin: 0; font-size: 12px; color: var(--muted); }
 .card-note.warn { color: var(--amber); }
 .card-also { margin: 0; font-size: 11px; color: var(--muted); }
-.card-action, .pay-btn { padding: 10px 14px; border: 0; border-radius: 999px; background: #0f4c75; color: white; font-weight: 600; font-size: 14px; cursor: pointer; }
+.card-action { padding: 10px 14px; border: 0; border-radius: 999px; background: #0f4c75; color: white; font-weight: 600; font-size: 14px; cursor: pointer; }
 .card-action { align-self: flex-start; background: #0f766e; }
 .card-action:disabled { background: var(--green-bg); color: var(--green); opacity: 1; }
-.pay-btn { align-self: flex-start; }
-.pay-note { margin: -4px 0 0; font-size: 11px; color: var(--muted); }
 .bill-address { margin: 0; font-size: 12px; color: var(--muted); }
-.bill-card.stale .pay-btn, .bill-card.stale .pay-note { display: none; }
 
 /* My orders */
 .orders-btn { border: 1px solid var(--border); background: var(--card-bg); border-radius: 999px; padding: 7px 12px; font-size: 13px; cursor: pointer; color: var(--text); }
@@ -848,7 +787,8 @@ body {
 .memory-tag.health { background: #fef2f2; color: #b91c1c; }
 
 @media (max-width: 700px) {
-  .activity-btn span { display: none; }
+  /* Compact, but the Tool calls / Memory labels and icons stay. */
+  .activity-btn { padding: 5px 8px; font-size: 11px; gap: 4px; }
   .activity-panel { position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; max-height: 78vh; overflow-y: auto; margin: 0;
     border-radius: 18px 18px 0 0; box-shadow: 0 -12px 40px #0f172a33; transform: translateY(105%); transition: transform .25s ease; }
   .activity-panel.open { transform: translateY(0); }
@@ -866,6 +806,10 @@ body {
 .doctor-row { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
 .doctor-row:first-of-type { border-top: 0; padding-top: 0; }
 .slot-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+/* A tool's own card (shoppingToolCard): each row's title, subtitle and meta on their own lines. */
+.ui-card .doctor-row > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ui-card .doctor-row .card-action { align-self: flex-start; }
+.ui-card > p { margin: 6px 0 0; }
 .card-action.slot-btn { padding: 6px 10px; font-size: 13px; }
 /* Prescription draft: a line read with low confidence */
 .rx-unclear { color: var(--amber); }

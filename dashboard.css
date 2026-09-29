@@ -10,7 +10,6 @@
   --accent: #6d28d9;
   --accent-soft: #f5f3ff;
   --radius: 14px;
-  --rail: 264px;
   --inspector: 380px;
 }
 
@@ -43,14 +42,13 @@ body {
 .ghost-btn:hover { border-color: #d4d7e3; background: #fafaff; }
 .user-menu > summary { border-radius: 10px; }
 
-/* ---------- three columns ---------- */
+/* ---------- two columns: the conversation, the inspector ---------- */
 .dashboard {
   max-width: 1560px; margin: 0 auto; padding: 18px 20px 28px;
   display: grid; gap: 16px;
-  grid-template-columns: var(--rail) minmax(0, 1fr) var(--inspector);
+  grid-template-columns: minmax(0, 1fr) var(--inspector);
   align-items: start;
 }
-.rail { display: flex; flex-direction: column; gap: 14px; min-width: 0; position: sticky; top: 68px; }
 .card {
   background: #fff; border: 1px solid var(--line-soft); border-radius: var(--radius);
   box-shadow: 0 1px 2px #1018280d; padding: 14px 16px; margin: 0;
@@ -61,12 +59,11 @@ body {
 .pill { display: inline-block; min-width: 20px; padding: 1px 7px; border-radius: 999px; background: #f2f4f7; color: var(--ink-soft); font-size: 11px; font-weight: 700; text-align: center; }
 details.card > summary { cursor: pointer; list-style: none; }
 details.card > summary::-webkit-details-marker { display: none; }
-.rail .medicine-grid { grid-template-columns: 1fr; gap: 8px; max-height: 320px; overflow-y: auto; margin-top: 10px; }
-.rail .cart-total { margin-top: 8px; }
 .selected-medicine { font-size: 12px; margin: 8px 0 0; }
 
 /* ---------- conversation ---------- */
-.chat-card { display: flex; flex-direction: column; min-height: calc(100vh - 130px); }
+/* The conversation panel (.card.chat-card) - not the cards in the chat (.chat-card, style.css). */
+.card.chat-card { display: flex; flex-direction: column; min-height: calc(100vh - 130px); }
 .chat-heading { padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); flex-wrap: wrap; }
 .chat-messages { flex: 1; max-height: none; min-height: 320px; padding: 14px 2px; background: none; border: none; }
 .chat-status { font-size: 11px; color: var(--ink-soft); background: #f2f4f7; border-radius: 999px; padding: 3px 9px; }
@@ -157,8 +154,6 @@ details.card[open] > summary::after { content: ''; transform: translateY(2px) ro
 .location-pin { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px;
   background: var(--accent-soft); color: var(--accent); font-size: 0; flex-shrink: 0; }
 .location-pin .icon-svg { width: 17px; height: 17px; }
-.channel { display: inline-flex; align-items: center; gap: 5px; }
-.channel .icon-svg { width: 13px; height: 13px; }
 .empty-cart-icon { display: grid; place-items: center; width: 44px; height: 44px; margin: 0 auto 8px; border-radius: 12px;
   background: #f2f4f7; color: var(--ink-soft); }
 .empty-cart-icon .icon-svg { width: 22px; height: 22px; stroke-width: 1.7; }
@@ -267,6 +262,10 @@ details.card[open] > summary::after { content: ''; transform: translateY(2px) ro
 .trace-tag, .trace-status { padding: 0 7px; border-radius: 6px; font-size: 10.5px; font-weight: 600; line-height: 1.7; background: #f2f4f7; color: var(--ink-2); }
 .trace-status { text-transform: uppercase; letter-spacing: .03em; }
 .trace-status.status-error { background: var(--err-bg); color: var(--err); }
+.trace-status.status-ok { background: #ecfdf5; color: #047857; }
+.trace-status.status-running { background: #eff6ff; color: #1d4ed8; }
+.trace-status.status-timeout, .trace-status.status-unavailable { background: var(--warn-bg); color: var(--warn); }
+.activity-live { border-style: dashed; }
 .trace-status.status-fallback { background: var(--warn-bg); color: var(--warn); }
 .table-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
 .table-chip { padding: 0 7px; border: 1px solid #e4e7ec; border-radius: 6px; background: #f8f9fc; color: var(--ink-2);
@@ -293,13 +292,10 @@ details.card[open] > summary::after { content: ''; transform: translateY(2px) ro
 
 /* ---------- narrower screens ---------- */
 @media (max-width: 1400px) {
-  :root { --rail: 240px; --inspector: 340px; }
+  :root { --inspector: 340px; }
 }
 @media (max-width: 1180px) {
-  .dashboard { grid-template-columns: minmax(0, 1fr) var(--inspector); }
-  .rail { grid-column: 1 / -1; position: static; flex-direction: row; flex-wrap: wrap; }
-  .rail > * { flex: 1 1 280px; }
-  .chat-card { min-height: 60vh; }
+  .card.chat-card { min-height: 60vh; }
 }
 @media (max-width: 860px) {
   .dashboard { grid-template-columns: minmax(0, 1fr); padding: 12px; }
@@ -325,18 +321,28 @@ details.card[open] > summary::after { content: ''; transform: translateY(2px) ro
   background: #ecfdf5; color: #047857; }
 .mic-filters span.off { background: #fef2f2; color: #b91c1c; }
 
-/* Voice ID: enrolment and its state (frontend/voiceid.js) */
-.voiceid-status { font-size: 10px; font-weight: 700; border-radius: 999px; padding: 2px 8px; background: #ecfdf5; color: #047857; }
-.voiceid-status.off { background: #f2f4f7; color: var(--ink-soft); }
-.voiceid-actions { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
-.voiceid-meter { width: 100%; height: 6px; margin: 6px 0; }
-
-/* Delivery location: the rail card and the location dialog (frontend/location-ui.js) */
-.location-row { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
-.location-pin { font-size: 20px; }
-.location-row-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-.location-row-text strong { font-size: 14px; }
-.location-row-text .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Beside the conversation, small: where Siru delivers (location-ui.js) and
+   the nearest pharmacies (shop-flow.js). The cart opens only when needed. */
+.context-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 0 2px; }
+/* In the top bar, between the bell and the profile: one line, no taller than the bar. */
+.topbar .context-row { flex-wrap: nowrap; gap: 6px; padding: 0; min-width: 0; }
+.topbar .context-row[hidden] { display: none; }
+.topbar .context-chip { padding: 5px 10px; font-size: 12.5px; white-space: nowrap; flex-shrink: 0; }
+.topbar .location-chip { flex-shrink: 1; min-width: 0; }
+.topbar .location-row-text { overflow: hidden; }
+.topbar .location-row-text strong { overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+.topbar .location-row-text .muted { max-width: 160px; }
+.topbar-actions { min-width: 0; }
+.context-chip { display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%;
+  padding: 5px 10px; border: 1px solid var(--line-soft); border-radius: 999px; background: #fff;
+  font: inherit; font-size: 12.5px; color: var(--ink); }
+.context-chip > .icon { color: var(--accent, #6d28d9); display: inline-flex; }
+.context-action { cursor: pointer; font-weight: 600; }
+.context-action:hover { border-color: var(--accent, #6d28d9); }
+.location-chip .link-btn { padding: 0 0 0 4px; font-size: 12.5px; }
+.location-row-text { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; }
+.location-row-text strong { font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.location-row-text .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
 .location-dialog h2 { font-size: 18px; margin: 0; }
 .location-status { margin: 10px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-size: 13px; }
 .location-status.location-status-error { background: #fef2f2; color: #9f1239; }
@@ -371,29 +377,86 @@ details.card[open] > summary::after { content: ''; transform: translateY(2px) ro
 .stm-role { font-weight: 700; color: var(--ink-3); }
 .stm-assistant .stm-role { color: var(--accent); }
 .stm-text { color: var(--ink-2); overflow-wrap: anywhere; }
-.ltm-business { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
-.ltm-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; }
-.ltm-label { color: var(--ink-soft); }
-.ltm-value { color: var(--ink); font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.state-cards { display: grid; gap: 8px; margin-top: 8px; }
+.state-card { border: 1px solid var(--line-soft); border-radius: 12px; padding: 10px 12px; background: #fff; display: grid; gap: 8px; }
+.state-card-head { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--ink-soft); }
+.state-status { letter-spacing: 0; font-weight: 600; color: var(--accent, #6d28d9); text-transform: none; }
+.state-card-meta { margin: -4px 0 0; }
+.state-item { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.state-img { width: 48px; height: 48px; border-radius: 8px; object-fit: contain; background: #f4f8fa; padding: 2px; }
+.state-item-info { display: grid; gap: 2px; min-width: 0; font-size: 13px; }
+.state-item-info strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.state-amount { font-size: 13px; font-weight: 600; }
+.state-card-foot { display: flex; justify-content: space-between; border-top: 1px solid var(--line-soft); padding-top: 6px; font-size: 13px; }
+.memory-facts-head { margin-top: 4px; }
 .memory-facts-note { margin: 0 0 6px; }
 
-/* Compact cart: one row per item, the list scrolls past ~5 items. */
-.rail .cart-card { padding-bottom: 12px; }
-.rail .cart-card #cartItems { max-height: 260px; overflow-y: auto; overscroll-behavior: contain; }
-.rail .cart-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
-.rail .cart-item img { width: 36px; height: 36px; border-radius: 6px; padding: 2px; }
-.rail .cart-item-info { flex: 1 1 auto; min-width: 0; gap: 1px; font-size: 13px; }
-.rail .cart-item-info strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rail .cart-item-side { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 13px; flex-shrink: 0; }
-.rail .cart-item-side .link-btn { padding: 0; font-size: 12px; }
-.rail .cart-total { padding: 10px 0 8px; font-size: 15px; margin-top: 0; }
-.rail .cart-card #placeOrderBtn { padding: 8px; }
-.rail .empty-cart { padding: 14px 8px; }
-.rail .empty-cart p { margin: 0 0 2px; }
-.rail .empty-cart-icon { width: 34px; height: 34px; margin-bottom: 6px; }
-@media (max-width: 1180px) {
-  .rail .cart-card #cartItems { max-height: 220px; }
+/* The cart and checkout dialog (shopping.js cartDialogShow): centred, one row
+   per item, the list scrolls past ~5 items. */
+.cart-dialog { width: min(520px, calc(100vw - 24px)); }
+.cart-dialog h2 { margin: 0; font-size: 18px; }
+.cart-dialog #cartItems { max-height: 300px; overflow-y: auto; overscroll-behavior: contain; }
+.cart-dialog .cart-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
+.cart-dialog .cart-item img { width: 36px; height: 36px; border-radius: 6px; padding: 2px; }
+.cart-dialog .cart-item-info { flex: 1 1 auto; min-width: 0; gap: 1px; font-size: 13px; }
+.cart-dialog .cart-item-info strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cart-dialog .cart-item-side { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 13px; flex-shrink: 0; }
+.cart-dialog .cart-item-side .link-btn { padding: 0; font-size: 12px; }
+.cart-dialog .cart-total { padding: 10px 0 8px; font-size: 15px; margin-top: 0; }
+.cart-dialog .empty-cart { padding: 14px 8px; }
+.cart-dialog .empty-cart p { margin: 0 0 2px; }
+.cart-dialog .empty-cart-icon { width: 34px; height: 34px; margin-bottom: 6px; }
+.cart-bill { border-top: 1px solid var(--line-soft); padding-top: 8px; display: grid; gap: 4px; font-size: 13px; }
+.cart-confirm { margin: 0 0 12px; }
+.cart-actions { display: grid; gap: 6px; }
+.cart-actions #placeOrderBtn { padding: 10px; }
+.cart-demo-note { text-align: center; }
+.cart-actions .cart-links { justify-content: space-between; }
+.cart-btn b { min-width: 16px; }
+/* The count on the Cart chip. */
+.chip-count { min-width: 18px; padding: 0 6px; border-radius: 999px; background: var(--accent-soft, #ede9fe);
+  color: var(--accent, #6d28d9); font-size: 11px; line-height: 18px; text-align: center; }
+
+/* What Siru is doing, live, in the conversation (shopping.js turnActivity*):
+   compact while it works, one line once done - expandable. */
+.turn-activity { align-self: flex-start; max-width: min(460px, 100%); padding: 0; border-radius: 12px;
+  background: #f8fafc; border: 1px solid var(--line-soft); font-size: 12.5px; color: var(--ink-soft); }
+.turn-activity.turn-pending::after { content: none; }
+.turn-activity > summary { display: flex; align-items: center; gap: 8px; padding: 7px 12px; cursor: pointer; list-style: none; }
+.turn-activity > summary::-webkit-details-marker { display: none; }
+.turn-activity:not(.has-steps):not(.done) > summary { cursor: default; }
+.activity-title { font-weight: 600; color: var(--ink); }
+.activity-counter { color: var(--ink-soft); }
+.activity-counter:not(:empty)::before { content: "·"; margin-right: 6px; }
+.activity-spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #c4b5fd; border-top-color: var(--accent, #6d28d9);
+  animation: activity-spin .8s linear infinite; flex: 0 0 auto; }
+.turn-activity.done .activity-spinner { animation: none; border: 0; width: 14px; height: 14px; display: grid; place-items: center; }
+.turn-activity.done.all-ok .activity-spinner::before { content: "✓"; color: #047857; font-weight: 700; }
+.turn-activity.done.has-problems .activity-spinner::before { content: "!"; color: #b45309; font-weight: 700; }
+.activity-steps { list-style: none; margin: 0; padding: 0 12px 8px; display: grid; gap: 4px; }
+.turn-activity:not(.has-steps) .activity-steps { display: none; }
+.activity-step { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.activity-label { color: var(--ink); overflow-wrap: anywhere; }
+.activity-state { font-size: 11px; color: var(--ink-soft); }
+.activity-mark { width: 12px; height: 12px; display: grid; place-items: center; font-size: 11px; font-weight: 700; }
+.state-running .activity-mark { border-radius: 50%; border: 2px solid #c4b5fd; border-top-color: var(--accent, #6d28d9);
+  animation: activity-spin .8s linear infinite; }
+.state-success .activity-mark::before { content: "✓"; color: #047857; }
+.state-failed .activity-mark::before, .state-stopped .activity-mark::before { content: "✕"; color: #b91c1c; }
+.state-failed .activity-state, .state-stopped .activity-state { color: #b91c1c; }
+.state-timeout .activity-mark::before { content: "⚠"; color: #b45309; }
+.state-timeout .activity-state { color: #b45309; }
+.state-fell-back .activity-mark::before, .state-skipped .activity-mark::before, .state-unavailable .activity-mark::before,
+.state-unfinished .activity-mark::before { content: "–"; color: var(--ink-soft); }
+@keyframes activity-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .activity-spinner, .state-running .activity-mark { animation: none; }
 }
+
+/* A bill or order in the chat: one line; the full card is in its dialog. */
+.receipt-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 8px 12px; border: 1px solid var(--line-soft); border-radius: 12px; background: #fafaff; font-size: 13px; }
+.receipt-line .link-btn { padding: 0; font-size: 13px; }
 
 /* An order's total and its Re-order button. */
 .order-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
@@ -402,22 +465,16 @@ details.card[open] > summary::after { content: ''; transform: translateY(2px) ro
 .memory-tag.allergy { background: #fef2f2; color: #b91c1c; }
 
 /* Cart quantity: − n + */
-.rail .cart-qty { display: inline-flex; align-items: center; gap: 4px; }
-.rail .qty-btn { width: 22px; height: 22px; padding: 0; border: 1px solid var(--line-soft, #e4e7ec); border-radius: 6px;
+.cart-dialog .cart-qty { display: inline-flex; align-items: center; gap: 4px; }
+.cart-dialog .qty-btn { width: 22px; height: 22px; padding: 0; border: 1px solid var(--line-soft, #e4e7ec); border-radius: 6px;
   background: var(--surface-2, #f8fafc); color: var(--ink-2, #344054); font-size: 14px; line-height: 1; cursor: pointer; }
-.rail .qty-btn:hover:not(:disabled) { border-color: var(--accent, #6d28d9); color: var(--accent, #6d28d9); }
-.rail .qty-btn:disabled { opacity: .5; cursor: default; }
-.rail .qty-value { min-width: 16px; text-align: center; font-size: 12px; font-weight: 600; }
+.cart-dialog .qty-btn:hover:not(:disabled) { border-color: var(--accent, #6d28d9); color: var(--accent, #6d28d9); }
+.cart-dialog .qty-btn:disabled { opacity: .5; cursor: default; }
+.cart-dialog .qty-value { min-width: 16px; text-align: center; font-size: 12px; font-weight: 600; }
 
 /* ---------- Nearby pharmacies -> medicines -> checkout (shop-flow.js) ---------- */
-.shop-entry { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border-radius: 14px;
-  border: 1px solid var(--line-soft, #e4e7ec); background: var(--surface, #fff); cursor: pointer; text-align: left;
-  font: inherit; color: inherit; }
-.shop-entry:hover { border-color: var(--accent, #6d28d9); }
-.shop-entry > .icon:first-child { color: var(--accent, #6d28d9); }
 .icon-next { transform: rotate(-90deg); display: inline-flex; }
 .icon-back { transform: rotate(90deg); display: inline-flex; }
-.shop-entry-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 /* A fixed-height dialog: header and footer stay put, only the body scrolls. */
 .shop-dialog { width: min(560px, calc(100vw - 24px)); height: min(720px, calc(100dvh - 24px)); max-height: none;
   padding: 0; display: none; flex-direction: column; overflow: hidden; }
@@ -576,8 +633,44 @@ html.shop-open, html.shop-open body { overflow: hidden; }
 @media (max-width: 600px) {
   .topbar-actions { margin-left: auto; }
 }
+/* Narrower desktops: the chips shed their extra words first. */
+@media (max-width: 1180px) {
+  .topbar .location-row-text .muted { display: none; }
+}
+@media (max-width: 1000px) {
+  .topbar .chip-extra { display: none; }
+  .topbar .user-menu .user-text { display: none; }
+}
+/* Phones: brand, bell and profile on the first line; the four chips on a
+   second, full-width line that scrolls sideways inside itself (never the page). */
+@media (max-width: 760px) {
+  .topbar-inner { flex-wrap: wrap; row-gap: 8px; }
+  .topbar-inner h1 { width: auto; flex: 1 1 auto; min-width: 0; }
+  .topbar-actions { display: contents; }
+  .topbar .context-row { order: 5; flex: 1 1 100%; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  .topbar .context-row::-webkit-scrollbar { display: none; }
+  .topbar .location-row-text strong { max-width: 130px; }
+  .topbar .location-chip { flex-shrink: 0; }
+  .topbar .context-chip { padding: 4px 9px; gap: 5px; }
+}
+/* Small phones: the action chips drop their icons so all four usually fit. */
+@media (max-width: 420px) {
+  .topbar .context-action > .icon { display: none; }
+}
 /* Phones: the cart's quantity steppers and Remove are touch targets of at least 32px. */
 @media (max-width: 860px) {
-  .rail .qty-btn { width: 32px; height: 32px; }
-  .rail .cart-item .remove-product { padding-top: 8px; padding-bottom: 8px; margin-top: -6px; margin-bottom: -6px; }
+  .cart-dialog .qty-btn { width: 32px; height: 32px; }
+  .cart-dialog .cart-item .remove-product { padding-top: 8px; padding-bottom: 8px; margin-top: -6px; margin-bottom: -6px; }
+  .location-row-text .muted { max-width: 120px; }
 }
+
+/* The cart and the orders answered in the chat (shopping.js cart_summary /
+   order_list): the same bill card as the cart and order windows, with their buttons. */
+.cart-summary-card, .order-list-card { display: grid; gap: 10px; }
+.cart-summary-card .bill-card, .order-list-card .bill-card { width: 100%; box-shadow: none; }
+.card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.card-actions .card-action { padding: 7px 12px; font-size: 13px; }
+.card-action.ghost { background: #fff; color: var(--accent, #0f766e); border: 1px solid currentColor; }
+.order-meta { margin: 0; }
+/* The merchant assistant's microphone sits between the input and Ask, like the pharmacy chat's. */
+.merchant-assistant .ask-form .mic-btn { flex-shrink: 0; }

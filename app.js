@@ -35,13 +35,6 @@ const el = {
   productList: document.getElementById("productList"),
   apiBaseLabel: document.getElementById("apiBaseLabel"),
   toastContainer: document.getElementById("toastContainer"),
-  emailInput: document.getElementById("emailInput"),
-  saveEmailBtn: document.getElementById("saveEmailBtn"),
-  emailChannelPill: document.getElementById("emailChannelPill"),
-  phoneInput: document.getElementById("phoneInput"),
-  savePhoneBtn: document.getElementById("savePhoneBtn"),
-  testSmsBtn: document.getElementById("testSmsBtn"),
-  phoneChannelPill: document.getElementById("phoneChannelPill"),
   micBtn: document.getElementById("micBtn"),
   micIcon: document.getElementById("micIcon"),
   micLabel: document.getElementById("micLabel"),
@@ -92,94 +85,6 @@ async function apiFetch(path, options = {}) {
   return res.json();
 }
 
-// ---------- Contact info (email + phone number) -----------------------------
-
-async function refreshContactStatus() {
-  const userId = getUserId();
-  if (!userId || isMerchant()) return;  // a buyer's delivery contact
-
-  try {
-    const contact = await apiFetch(`/v1/contacts/${encodeURIComponent(userId)}`);
-    if (getUserId() !== userId) return;
-    el.emailInput.value = contact.email || "";
-    el.phoneInput.value = contact.phone_number || "";
-    setChannelPill(el.emailChannelPill, !!contact.email);
-    setChannelPill(el.phoneChannelPill, !!contact.phone_number);
-  } catch (err) {
-    // Best-effort - contact status is a nice-to-have, not core functionality.
-  }
-}
-
-function setChannelPill(el_, active) {
-  el_.classList.toggle("active", active);
-  el_.classList.toggle("disabled", !active);
-}
-
-el.saveEmailBtn.addEventListener("click", async () => {
-  const userId = getUserId();
-  const email = el.emailInput.value.trim();
-  if (!userId || !email) return;
-
-  el.saveEmailBtn.disabled = true;
-  try {
-    // In the body, never the URL: a URL ends up in logs and history.
-    await apiFetch(`/v1/contacts/${encodeURIComponent(userId)}`, { method: "POST", body: JSON.stringify({ email }) });
-    if (getUserId() !== userId) return;
-    showToast({ icon: "mail", type: "success", body: "Email saved for notifications." });
-    refreshContactStatus();
-  } catch (err) {
-    showToast({ icon: "alert", type: "info", body: `Couldn't save email. ${escapeHtml(pharmacyError(err))}` });
-  } finally {
-    el.saveEmailBtn.disabled = false;
-  }
-});
-
-el.savePhoneBtn.addEventListener("click", async () => {
-  const userId = getUserId();
-  const phone = el.phoneInput.value.trim();
-  if (!userId || !phone) return;
-
-  el.savePhoneBtn.disabled = true;
-  try {
-    await apiFetch(`/v1/contacts/${encodeURIComponent(userId)}`, { method: "POST", body: JSON.stringify({ phone_number: phone }) });
-    if (getUserId() !== userId) return;
-    showToast({ icon: "phone", type: "success", body: "Phone number saved." });
-    refreshContactStatus();
-  } catch (err) {
-    showToast({ icon: "alert", type: "info", body: `Couldn't save phone number. ${escapeHtml(pharmacyError(err))}` });
-  } finally {
-    el.savePhoneBtn.disabled = false;
-  }
-});
-
-el.testSmsBtn.addEventListener("click", async () => {
-  const phone = el.phoneInput.value.trim();
-  if (!phone) return;
-
-  el.testSmsBtn.disabled = true;
-  el.testSmsBtn.textContent = "Sending...";
-  try {
-    // The test goes to the user's own saved number: save what's typed, then test it.
-    const userId = getUserId();
-    await apiFetch(`/v1/contacts/${encodeURIComponent(userId)}`, { method: "POST", body: JSON.stringify({ phone_number: phone }) });
-    const result = await apiFetch(`/v1/contacts/${encodeURIComponent(userId)}/test-sms`, { method: "POST" });
-    if (result.sent) {
-      showToast({ icon: "phone", type: "success", body: `Test SMS sent to ${escapeHtml(phone)} - check your phone.` });
-    } else {
-      showToast({
-        icon: "alert",
-        type: "info",
-        body: "SMS didn't send - likely an unverified number (Twilio trial) or, for Indian numbers, the DLT template restriction. Check the backend logs for the exact reason.",
-      });
-    }
-  } catch (err) {
-    showToast({ icon: "alert", type: "info", body: `Test SMS failed. ${escapeHtml(pharmacyError(err))}` });
-  } finally {
-    el.testSmsBtn.disabled = false;
-    el.testSmsBtn.textContent = "Send test";
-  }
-});
-
 // ---------- Ask the assistant ----------
 
 el.askForm.addEventListener("submit", async (e) => {
@@ -229,6 +134,46 @@ function renderAskResult(data) {
 
 let voiceRoom = null;
 let micMuted = false;
+
+// One voice call path for both chats: the same LiveKit room, speech
+// recognition and voice worker. What differs is where the call's UI lives - a
+// buyer's pharmacy chat, or a merchant's assistant (merchant.js). The worker
+// picks the merchant turn from the verified account's role, never from here.
+const buyerVoiceSurface = {
+  get micBtn() { return el.micBtn; },
+  get micIcon() { return el.micIcon; },
+  get micLabel() { return el.micLabel; },
+  generation: () => shop.generation,
+  async ready() {
+    // Connect to the pharmacy first when the page hasn't yet (API still
+    // starting, profile switched) instead of refusing to start voice.
+    await shoppingEnsureConnected();
+    await shoppingSelectionReady();
+  },
+  // chat_session_id: the session the typed chat is in, so a spoken turn and a
+  // typed one belong to one conversation (worker: conversation_id).
+  sessionQuery: () => `&preferred_language=${encodeURIComponent(currentProfile().language_code)}`
+    + (shoppingSessionId ? `&chat_session_id=${encodeURIComponent(shoppingSessionId)}` : ''),
+  body() {
+    // The location verified once at sign-in (location.js) goes with the
+    // session - in the body, never the URL - for spoken "nearest pharmacy" answers.
+    const place = locationTurnContext();
+    return place?.lat != null ? {location: {lat: place.lat, lng: place.lng}} : {};
+  },
+  onEvent: message => shoppingVoiceEvent(message),
+  onUnreadable() { setVoiceStatus("Couldn't read Siru's reply. Refreshing the cart…"); shoppingRefresh(); },
+  onReconnected: () => shoppingRefresh(),
+  preview: text => shoppingLivePreview(text),
+  previewText: () => shopEl.liveTranscript.textContent,
+  notice: (text, kind) => shoppingNotice(text, kind),
+  hasMute: true,
+};
+
+function voiceSurface() {
+  return isMerchant() && typeof merchantVoiceSurface === 'object' ? merchantVoiceSurface : buyerVoiceSurface;
+}
+// The surface of the call in progress (a sign-in change ends it).
+let voiceActiveSurface = buyerVoiceSurface;
 
 el.micBtn.addEventListener("click", () => {
   if (voiceRoom) {
@@ -298,10 +243,13 @@ function updateMuteUI() {
 const VOICE_AGENT_JOIN_MS = 15000;
 
 async function startVoiceSession() {
-  if (voiceRoom || el.micBtn.disabled) return;
+  const surface = voiceSurface();
+  if (voiceRoom || surface.micBtn.disabled) return;
   const userId = getUserId();
   if (!userId) return;
-  const generation = shop.generation;
+  voiceActiveSurface = surface;
+  const generationNow = surface.generation;
+  const generation = generationNow();
   let connectingRoom = null;
   // Which part failed decides the message: the pharmacy API (voice token)
   // or the voice server (LiveKit) - a LiveKit "Failed to fetch" is not the API.
@@ -309,28 +257,33 @@ async function startVoiceSession() {
   // A new call reports its own stage failures (shopping.js shoppingVoiceError).
   if (typeof voiceErrorShown === 'string') voiceErrorShown = '';
 
-  el.micBtn.disabled = true;
+  surface.micBtn.disabled = true;
   setVoiceStatus("Connecting...");
   const voiceLog = (stage, detail = {}) => console.info(`siru: voice ${stage}`, detail);
   voiceLog('start');
 
   try {
-    // Connect to the pharmacy first when the page hasn't yet (API still
-    // starting, profile switched) instead of refusing to start voice.
-    await shoppingEnsureConnected();
-    if (generation !== shop.generation) return;
-    await shoppingSelectionReady();
-    if (generation !== shop.generation) return;
+    await surface.ready();
+    if (generation !== generationNow()) return;
     // Do not send shopping_session_id: that selects the separate demo parser
     // in the worker and bypasses the Supervisor/Commerce/Care flow.
-    // chat_session_id: the session the typed chat is in, so a spoken turn and
-    // a typed one belong to one conversation (worker: conversation_id).
-    const sessionQuery = `&preferred_language=${encodeURIComponent(currentProfile().language_code)}`
-      + (shoppingSessionId ? `&chat_session_id=${encodeURIComponent(shoppingSessionId)}` : '');
+    const sessionQuery = surface.sessionQuery();
     voiceLog('token requested');
-    const { token, url, room_name: roomName } = await apiFetch(`/v1/voice/token?user_id=${encodeURIComponent(userId)}${sessionQuery}`, { method: "POST" });
+    // The microphone first: without it there is no call, so no voice session
+    // (and no greeting) is started for nothing. The probe is released at once;
+    // the call opens its own track after connecting.
+    try {
+      const probe = await navigator.mediaDevices.getUserMedia({audio: true});
+      probe.getTracks().forEach(track => track.stop());
+    } catch (err) {
+      voiceStage = 'microphone';
+      throw err;
+    }
+    if (generation !== generationNow() || getUserId() !== userId) return;
+    const voiceBody = surface.body();
+    const { token, url, room_name: roomName } = await apiFetch(`/v1/voice/token?user_id=${encodeURIComponent(userId)}${sessionQuery}`, { method: "POST", body: JSON.stringify(voiceBody) });
     voiceLog('token issued', {room: roomName, server: new URL(url).host});
-    if (generation !== shop.generation || getUserId() !== userId) return;
+    if (generation !== generationNow() || getUserId() !== userId) return;
 
     // Browser-side cleanup before audio ever reaches STT: echo cancellation
     // keeps the assistant's own voice (from speakers) from being heard as the
@@ -350,10 +303,9 @@ async function startVoiceSession() {
     room.on(LivekitClient.RoomEvent.DataReceived, (payload, participant, kind, topic) => {
       if (room !== voiceRoom || getUserId() !== userId || topic !== TURN_TOPIC) return;
       try {
-        shoppingVoiceEvent(JSON.parse(new TextDecoder().decode(payload)));
+        surface.onEvent(JSON.parse(new TextDecoder().decode(payload)));
       } catch (err) {
-        setVoiceStatus("Couldn't read Siru's reply. Refreshing the cart…");
-        shoppingRefresh();
+        surface.onUnreadable();
       }
     });
     // The live transcripts are not chat messages: the user's speech is shown
@@ -361,14 +313,14 @@ async function startVoiceSession() {
     // (Siru's transcript only says it is final when its stream closes, and
     // arrives when the speech ends - the turn messages above don't wait.)
     const transcript = (segment, identity) => {
-      if (room !== voiceRoom || generation !== shop.generation || !segment.text?.trim()) return;
+      if (room !== voiceRoom || generation !== generationNow() || !segment.text?.trim()) return;
       if (identity === userId) {
-        shoppingLivePreview(segment.text);
+        surface.preview(segment.text);
         setVoiceStatus(segment.final ? 'Processing...' : 'Listening...');
         // Speech the worker ignored (background, a filler word) starts no turn:
         // don't leave it showing.
         if (segment.final) setTimeout(() => {
-          if (shopEl.liveTranscript.textContent === segment.text) shoppingLivePreview('');
+          if (surface.previewText() === segment.text) surface.preview('');
         }, 6000);
       } else {
         setVoiceStatus('SIRU AI is speaking...');
@@ -405,7 +357,7 @@ async function startVoiceSession() {
         }
       });
     }
-    room.on(LivekitClient.RoomEvent.Reconnected, () => { if (room === voiceRoom) shoppingRefresh(); });
+    room.on(LivekitClient.RoomEvent.Reconnected, () => { if (room === voiceRoom) surface.onReconnected(); });
     // The voice worker joins the room on its own; if none does, say so rather
     // than listening to nobody.
     let agentJoined = false;
@@ -464,32 +416,34 @@ async function startVoiceSession() {
     await room.connect(url, token);
     voiceLog('room connected');
     voiceStage = 'media';
-    if (generation !== shop.generation) {
+    if (generation !== generationNow()) {
       await room.disconnect();
       return;
     }
     if (typeof room.startAudio === "function") await room.startAudio();
-    if (room !== voiceRoom || generation !== shop.generation) return;
+    if (room !== voiceRoom || generation !== generationNow()) return;
     voiceStage = 'microphone';
     await room.localParticipant.setMicrophoneEnabled(true, micCapture);
     voiceLog('microphone on');
-    if (room !== voiceRoom || generation !== shop.generation) { await room.disconnect(); return; }
+    if (room !== voiceRoom || generation !== generationNow()) { await room.disconnect(); return; }
     agentJoined = agentJoined || room.remoteParticipants.size > 0;
     setTimeout(() => {
       if (room !== voiceRoom || agentJoined || room.remoteParticipants.size > 0) return;
       voiceLog('failed', {stage: 'assistant', reason: 'no voice worker joined'});
       const message = "The voice assistant didn't join the call - the voice worker isn't running. Typed chat still works.";
       setVoiceStatus(message);
-      shoppingNotice(message, 'voice');
+      surface.notice(message, 'voice');
     }, VOICE_AGENT_JOIN_MS);
     micMuted = false;
     showMicFilters(room);
 
-    el.micBtn.setAttribute("aria-pressed", "true");
-    el.micBtn.classList.add("recording");
-    el.micLabel.textContent = "Stop talking";
-    el.muteBtn.hidden = false;
-    updateMuteUI();
+    surface.micBtn.setAttribute("aria-pressed", "true");
+    surface.micBtn.classList.add("recording");
+    surface.micLabel.textContent = "Stop talking";
+    if (surface.hasMute) {
+      el.muteBtn.hidden = false;
+      updateMuteUI();
+    }
     setVoiceStatus("Listening - speak anytime");
   } catch (err) {
     // Clear voiceRoom (so the TrackSubscribed/Disconnected guards above
@@ -502,7 +456,7 @@ async function startVoiceSession() {
     if (abandonedRoom) {
       await abandonedRoom.disconnect();
     }
-    if (generation !== shop.generation || getUserId() !== userId) return;
+    if (generation !== generationNow() || getUserId() !== userId) return;
     resetVoiceUI();
     const message = err.name === 'NotAllowedError'
       ? 'Microphone permission denied. Allow microphone access in the browser and try again.'
@@ -519,10 +473,10 @@ async function startVoiceSession() {
     // The technical reason (signalling, ICE, media) for whoever debugs it - not the user.
     console.warn('siru: voice failed', {stage: voiceStage, status: err.status || null, name: err.name, message: err.message});
     setVoiceStatus(message);
-    shoppingNotice(message, 'voice');
+    surface.notice(message, 'voice');
     showToast({ icon: "alert", type: "info", body: escapeHtml(message) });
   } finally {
-    if (generation === shop.generation) el.micBtn.disabled = !getUserId();
+    if (generation === generationNow()) surface.micBtn.disabled = !getUserId();
   }
 }
 
@@ -530,24 +484,34 @@ async function stopVoiceSession() {
   const room = voiceRoom;
   voiceRoom = null;
   resetVoiceUI();
-  el.micBtn.disabled = !getUserId();
+  voiceActiveSurface.micBtn.disabled = !getUserId();
   if (room) await room.disconnect();
 }
 
 function resetVoiceUI() {
   document.querySelectorAll("audio[data-voice-track]").forEach((el_) => el_.remove());
-  if (typeof shoppingLivePreview === 'function') shoppingLivePreview('');
-  el.micBtn.setAttribute("aria-pressed", "false");
-  el.micBtn.classList.remove("recording");
-  iconSet(el.micIcon, "mic");
-  el.micLabel.textContent = "Start talking";
+  for (const surface of [buyerVoiceSurface, typeof merchantVoiceSurface === 'object' ? merchantVoiceSurface : null]) {
+    if (!surface) continue;
+    surface.preview('');
+    surface.micBtn.setAttribute("aria-pressed", "false");
+    surface.micBtn.classList.remove("recording");
+    iconSet(surface.micIcon, "mic");
+    surface.micLabel.textContent = "Start talking";
+  }
   el.muteBtn.hidden = true;
   hideMicFilters();
   micMuted = false;
   setVoiceStatus("");
 }
 
+// The call's status line: the pharmacy chat's, or the merchant assistant's.
 function setVoiceStatus(text) {
+  // During a call, that call's chat; otherwise the signed-in role's.
+  const surface = voiceRoom ? voiceActiveSurface : voiceSurface();
+  if (surface.setStatus) {
+    surface.setStatus(text);
+    return;
+  }
   el.voiceStatus.textContent = text;
   if (typeof shoppingStatus === 'function') shoppingStatus();
 }

@@ -1,0 +1,47 @@
+# Offline CI for the static frontend: no backend, no secrets.
+#   - every script parses (node --check) - the site has no build step, so a
+#     syntax error would otherwise only show up in a browser;
+#   - the development server's tests (dev/test_serve.py);
+#   - the Vercel build step writes config.js from an https URL, and refuses
+#     a missing or plain-http one.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Every script parses
+        run: for f in *.js scripts/*.mjs; do node --check "$f"; done
+
+      - name: Development server tests
+        run: python -m unittest discover -s dev -p "test_*.py"
+
+      - name: Vercel build step (write-config)
+        run: |
+          work=$(mktemp -d); mkdir -p "$work/scripts"; cp scripts/write-config.mjs "$work/scripts/"
+          (cd "$work" && PUBLIC_API_BASE_URL=https://api.example.test node scripts/write-config.mjs)
+          grep -q '"https://api.example.test"' "$work/config.js"
+          if (cd "$work" && PUBLIC_API_BASE_URL=http://api.example.test node scripts/write-config.mjs); then
+            echo "a plain-http backend must be refused"; exit 1
+          fi
+          if (cd "$work" && env -u PUBLIC_API_BASE_URL node scripts/write-config.mjs); then
+            echo "a missing PUBLIC_API_BASE_URL must be refused"; exit 1
+          fi

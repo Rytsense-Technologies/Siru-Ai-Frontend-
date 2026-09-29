@@ -1,0 +1,162 @@
+"""The pharmacy page's structure (index.html + its CSS and scripts). Standard
+library only:
+
+    python -m unittest discover -s dev -p "test_*.py"
+
+  * the conversation is the page: no persistent cart / order panel beside it -
+    the cart and checkout are a dialog opened when needed (shopping.js);
+  * the Voice ID and Delivery contact panels are gone, with their code and CSS;
+  * every element the scripts look up by id is on the page, and every script
+    and stylesheet the page loads exists.
+"""
+from __future__ import annotations
+
+import re
+import unittest
+from html.parser import HTMLParser
+from pathlib import Path
+
+FRONTEND = Path(__file__).resolve().parents[1]
+
+
+class _Page(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.ids: dict[str, list[str]] = {}  # id -> the ids of its enclosing elements
+        self.order: list[str] = []  # every id, in document order
+        self.tags: dict[str, list[str]] = {}  # id -> the tags (and classes) enclosing it
+        self.classes: set[str] = set()
+        self.assets: list[str] = []
+        self._stack: list[tuple[str, str]] = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        ancestors = [i for _, i in self._stack if i]
+        if attrs.get("id"):
+            self.ids[attrs["id"]] = ancestors
+            self.order.append(attrs["id"])
+            self.tags[attrs["id"]] = [t for t, _ in self._stack]
+        self.classes.update((attrs.get("class") or "").split())
+        if tag == "script" and attrs.get("src"):
+            self.assets.append(attrs["src"])
+        if tag == "link" and attrs.get("rel") == "stylesheet" and not attrs["href"].startswith("http"):
+            self.assets.append(attrs["href"])
+        if tag not in ("meta", "link", "input", "img", "br", "hr", "source", "progress"):
+            self._stack.append((tag if tag != "header" else f"header.{attrs.get('class', '')}", attrs.get("id", "")))
+
+    def handle_endtag(self, tag):
+        while self._stack:
+            if self._stack.pop()[0] == tag:
+                break
+
+
+def _page() -> _Page:
+    page = _Page()
+    page.feed((FRONTEND / "index.html").read_text(encoding="utf-8"))
+    return page
+
+
+class PageStructureTest(unittest.TestCase):
+    def test_no_persistent_cart_or_order_panel_beside_the_conversation(self):
+        page = _page()
+        self.assertNotIn("rail", page.classes)
+        self.assertNotIn("cart-card", page.classes)
+        for element in ("cartItems", "cartTotal", "placeOrderBtn", "clearCartBtn", "cartOrdersBtn", "cartConfirm"):
+            self.assertIn("cartDialog", page.ids[element], f"{element} must be inside the cart dialog")
+        # Location | Nearby pharmacies | Cart | Orders, one compact row of chips.
+        for chip in ("locationRow", "shopNearbyBtn", "cartBtn", "ordersBtn"):
+            self.assertIn("contextRow", page.ids[chip], f"{chip} belongs in the context row")
+        self.assertIn("cartCount", page.ids)
+
+    def test_the_context_row_is_in_the_top_bar_between_the_bell_and_the_profile(self):
+        page = _page()
+        self.assertIn("header.topbar", page.tags["contextRow"])
+        self.assertNotIn("appView", page.ids["contextRow"])  # not also under the conversation
+        self.assertEqual(page.order.count("contextRow"), 1)
+        order = page.order
+        self.assertLess(order.index("notifBell"), order.index("contextRow"))
+        self.assertLess(order.index("contextRow"), order.index("userMenu"))
+
+    def test_the_header_keeps_tool_calls_memory_and_the_bell(self):
+        page = _page()
+        for control in ("activityBtn", "activityCountTop", "memoryBtn", "memoryCountTop", "notifBell"):
+            self.assertIn(control, page.ids)
+        css = "".join(p.read_text(encoding="utf-8") for p in FRONTEND.glob("*.css"))
+        self.assertNotRegex(css, r"\.activity-btn span\s*\{\s*display:\s*none")  # labels and icons stay visible
+
+    def test_the_memory_tab_keeps_cart_orders_and_personal_memory_apart(self):
+        page = _page()
+        for section in ("memoryCart", "memoryOrders", "memoryList", "stmSummary"):
+            self.assertIn("memoryTab", page.ids[section])
+
+    def test_the_voice_id_and_delivery_contact_panels_are_gone(self):
+        page = _page()
+        for gone in ("voiceIdEnrol", "voiceIdStatus", "voiceIdDelete", "emailInput", "phoneInput",
+                     "saveEmailBtn", "savePhoneBtn", "testSmsBtn", "emailChannelPill", "phoneChannelPill"):
+            self.assertNotIn(gone, page.ids)
+        self.assertFalse((FRONTEND / "voiceid.js").exists())
+        self.assertFalse(any("voiceid" in asset for asset in page.assets))
+        scripts = "".join(p.read_text(encoding="utf-8") for p in FRONTEND.glob("*.js"))
+        for gone in ("voiceIdRefresh", "refreshContactStatus", "setChannelPill", "emailInput", "testSmsBtn"):
+            self.assertNotIn(gone, scripts)
+        css = "".join(p.read_text(encoding="utf-8") for p in FRONTEND.glob("*.css"))
+        for gone in (".rail", "--rail", ".voiceid-", ".channels-row", ".shop-entry", ".info-grid", ".pay-btn"):
+            self.assertNotIn(gone, css)
+
+    def test_every_asset_the_page_loads_exists(self):
+        for asset in _page().assets:
+            if asset.startswith(("http://", "https://")):
+                continue  # the LiveKit client, from its CDN
+            self.assertTrue((FRONTEND / asset.split("?")[0]).is_file(), asset)
+
+    def test_no_two_page_scripts_declare_the_same_top_level_name(self):
+        """Classic scripts share one global scope: a second `const X` stops
+        that whole script from loading (node --check can't see it)."""
+        declared: dict[str, list[str]] = {}
+        for asset in _page().assets:
+            if asset.startswith(("http://", "https://")) or not asset.split("?")[0].endswith(".js"):
+                continue
+            text = (FRONTEND / asset.split("?")[0]).read_text(encoding="utf-8")
+            for name in re.findall(r"^(?:const|let|var|class|function|async function)\s+([A-Za-z_$][\w$]*)", text, flags=re.M):
+                declared.setdefault(name, []).append(asset)
+        self.assertEqual({name: files for name, files in declared.items() if len(files) > 1}, {})
+
+    def test_every_id_the_scripts_look_up_is_on_the_page(self):
+        ids = set(_page().ids)
+        missing = set()
+        for script in ("shopping.js", "app.js", "user-menu.js", "location-ui.js", "memory.js", "shop-flow.js",
+                       "merchant.js"):
+            text = (FRONTEND / script).read_text(encoding="utf-8")
+            wanted = set(re.findall(r"getElementById\(['\"]([A-Za-z][\w-]*)['\"]\)", text))
+            # shopping.js / location-ui.js list their ids in an array
+            for block in re.findall(r"Object\.fromEntries\(\[(.*?)\]\.map", text, flags=re.S):
+                wanted |= set(re.findall(r"['\"]([A-Za-z][\w-]*)['\"]", block))
+            missing |= {f"{script}: {i}" for i in wanted - ids}
+        # Known and older than this test: app.js's unused "demo panel" code
+        # (loadProducts - never called) still looks up #productList.
+        self.assertEqual(missing - {"app.js: productList"}, set())
+
+    def test_the_merchant_assistant_has_a_microphone_on_the_same_voice_path(self):
+        page = _page()
+        self.assertIn("merchantForm", page.ids["merchantMicBtn"])
+        merchant = (FRONTEND / "merchant.js").read_text(encoding="utf-8")
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+        # One call path: merchant.js starts app.js's voice session, no second LiveKit client of its own.
+        self.assertIn("startVoiceSession()", merchant)
+        self.assertNotIn("LivekitClient", merchant)
+        self.assertIn("merchantVoiceSurface", app)
+
+    def test_cart_and_order_windows_open_only_when_asked(self):
+        """A cart or order answer is a chat card; the Cart / Orders window
+        opens on an explicit "open" (the open_view card) or a button click."""
+        shopping = (FRONTEND / "shopping.js").read_text(encoding="utf-8")
+        for automatic in ("cartDialogShow({note: 'Your cart changed", "cartDialogShow({note: 'Check it, then confirm",
+                          "      orderDialogShow(snapshot);"):
+            self.assertNotIn(automatic, shopping)
+        self.assertIn("card?.kind === 'open_view'", shopping)
+        for kind in ("cart_summary:", "order_list:", "open_view:"):
+            self.assertIn(kind, shopping)
+
+
+if __name__ == "__main__":
+    unittest.main()

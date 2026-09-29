@@ -28,6 +28,7 @@ const merchantEl = Object.fromEntries([
   'merchantView', 'merchantNav', 'merchantName', 'merchantIdLine', 'merchantEyebrow', 'merchantTitle',
   'merchantSub', 'merchantRefresh', 'merchantNotice', 'merchantBody', 'merchantAssistant', 'merchantLog',
   'merchantSuggestions', 'merchantForm', 'merchantInput', 'merchantSend', 'merchantChatStatus',
+  'merchantMicBtn', 'merchantMicIcon', 'merchantMicLabel', 'merchantLiveTranscript',
 ].map(id => [id, document.getElementById(id)]));
 
 const merchant = {
@@ -478,8 +479,23 @@ function merchantCard(card) {
   return box;
 }
 
-function merchantBubble(role, text, cards = []) {
+// What the turn actually did - the trace's own tool / agent / model steps
+// (tracing.py), labelled as the pharmacy chat labels them. Nothing is added.
+function merchantActivity(trace) {
+  const activity = [];
+  for (const step of trace?.steps || []) {
+    const label = typeof activityLabel === 'function' ? activityLabel(step) : null;
+    if (!label || activity.at(-1)?.label === label) continue;  // a direct tool and its own call: one row
+    activity.push({label, state: activityState(step)});
+  }
+  if (!activity.length || typeof turnActivityRestore !== 'function') return null;
+  return turnActivityRestore({activity, status: 'answered'});
+}
+
+function merchantBubble(role, text, cards = [], trace = null) {
   const entry = mEl('div', `chat-entry ${role === 'user' ? 'user' : ''}`);
+  const activity = role === 'user' ? null : merchantActivity(trace);
+  if (activity) entry.append(activity);
   if (text) entry.append(mEl('div', `chat-bubble ${role === 'user' ? 'user' : ''}`, text));
   for (const card of cards) { const node = merchantCard(card); if (node) entry.append(node); }
   merchantEl.merchantLog.append(entry);
@@ -503,7 +519,7 @@ async function merchantAsk(text) {
     })});
     if (generation !== merchant.generation) return;
     const answer = typeof reply.final_output === 'string' ? reply.final_output : '';
-    merchantBubble('assistant', answer, reply.cards || []);
+    merchantBubble('assistant', answer, reply.cards || [], reply.trace);
     merchant.history.push({role: 'user', content: question});
     if (answer) merchant.history.push({role: 'assistant', content: answer});
   } catch (err) {
@@ -518,6 +534,80 @@ async function merchantAsk(text) {
     }
   }
 }
+
+// ---------- voice: the pharmacy chat's call path (app.js startVoiceSession) ----------
+//
+// The microphone joins the same LiveKit room, speech recognition and voice
+// worker as a buyer's call; the worker runs the merchant turn for a merchant
+// account (voice/worker.py - the role of the verified account, not anything
+// sent from here). The worker's turn messages come here instead of the
+// pharmacy chat: the merchant's words, the reply spoken, its cards and steps.
+// No audio is kept by this page.
+const merchantVoice = {turns: new Map()};  // turn id -> the merchant's words
+
+function merchantVoiceStatus(text) {
+  const status = merchantEl.merchantChatStatus;
+  status.textContent = text || (merchant.busy ? 'Checking your store…' : 'Ready');
+  status.classList.toggle('active', Boolean(text) || merchant.busy);
+}
+
+const merchantVoiceSurface = {
+  get micBtn() { return merchantEl.merchantMicBtn; },
+  get micIcon() { return merchantEl.merchantMicIcon; },
+  get micLabel() { return merchantEl.merchantMicLabel; },
+  generation: () => merchant.generation,
+  async ready() {},
+  // The typed assistant's conversation, so spoken and typed turns share it (short-term only).
+  sessionQuery: () => (merchant.conversationId ? `&chat_session_id=${encodeURIComponent(merchant.conversationId)}` : ''),
+  body: () => ({}),
+  onEvent: message => merchantVoiceEvent(message),
+  onUnreadable() { merchantVoiceStatus("Couldn't read the assistant's reply. Please ask again."); },
+  onReconnected() {},
+  preview(text) {
+    const box = merchantEl.merchantLiveTranscript;
+    box.textContent = text || '';
+    box.hidden = !text;
+  },
+  previewText: () => merchantEl.merchantLiveTranscript.textContent,
+  notice: text => merchantNotice(text),
+  hasMute: false,
+  setStatus: text => merchantVoiceStatus(text),
+};
+
+function merchantVoiceEvent(message) {
+  if (!message || !merchant.user) return;
+  if (message.type === 'turn.start') {
+    merchantVoice.turns.set(message.turn_id, message.user_text || '');
+    merchantVoiceSurface.preview('');
+    merchantBubble('user', message.user_text || '');
+    merchantVoiceStatus('Checking your store…');
+  } else if (message.type === 'turn.result') {
+    const question = merchantVoice.turns.get(message.turn_id);
+    merchantVoice.turns.delete(message.turn_id);
+    if (message.status === 'answered' && message.reply) {
+      merchantBubble('assistant', message.reply, message.cards || [], message.trace);
+      if (question) merchant.history.push({role: 'user', content: question});
+      merchant.history.push({role: 'assistant', content: message.reply});
+    } else if (message.status === 'failed') {
+      merchantBubble('assistant', "Sorry, I couldn't answer that. Please try again.", [], message.trace);
+    }
+    merchantVoiceStatus(voiceRoom ? 'Listening - speak anytime' : '');
+  } else if (message.type === 'reply' && message.text) {
+    merchantBubble('assistant', message.text);  // the greeting, "could you say that again"
+  } else if (message.type === 'voice.error') {
+    // Speech recognition / synthesis failed: the stage and a safe reason, never the provider's message.
+    const stage = (typeof VOICE_STAGE_NAMES === 'object' && VOICE_STAGE_NAMES[message.stage]) || 'Voice';
+    const reason = (typeof VOICE_REASONS === 'object' && VOICE_REASONS[message.reason]) || "the speech service isn't responding";
+    const text = `${stage} isn't available: ${reason}.${message.recoverable ? ' Retrying…' : ' Typed questions still work.'}`;
+    merchantVoiceStatus(text);
+    merchantNotice(text);
+  }
+}
+
+merchantEl.merchantMicBtn.addEventListener('click', () => {
+  if (voiceRoom) stopVoiceSession();
+  else startVoiceSession();
+});
 
 // ---------- sign-in / sign-out (user-menu.js applySignedInUser) ----------
 
@@ -540,6 +630,8 @@ function merchantApplyUser() {
     node.textContent = '';
   }
   merchantEl.merchantInput.value = '';
+  merchantVoice.turns.clear();
+  merchantVoiceSurface.preview('');
   const profile = currentProfile();
   merchant.user = profile && isMerchant() ? profile : null;
   if (!merchant.user) return;

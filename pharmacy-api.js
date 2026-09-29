@@ -3,7 +3,9 @@
 // actually sent is shown: the text and cards it streamed, and at turn_end
 // its own trace (route, agent, tools, model calls, latency).
 const concierge = {
-  async turn(body) {
+  // `onStep(step)`: each trace step as it happens (SSE `step`) - the
+  // inspector's live view of the turn.
+  async turn(body, onStep = null) {
     const token = authToken();
     const res = await fetch(`${API_BASE}/v1/concierge/turn`, {
       method:'POST', body:JSON.stringify(body), headers:{...apiHeaders(), 'x-siru-trace':'1'},
@@ -20,6 +22,9 @@ const concierge = {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     const answer = {text:'', cards:[], trace:null, traceId:null};
+    // Every step streamed so far (SSE `step`, the newest version of each by id):
+    // a turn that fails still shows what it did - the timed-out model call too.
+    const steps = new Map();
     // What the tools did, as streamed before turn_end (the trace channel):
     // each call's plane (core / ai), input, latency and the tables it read or
     // wrote, and the checkpoint writes - the inspector's Data tab.
@@ -34,14 +39,18 @@ const concierge = {
       resolveTurn(answer);
     };
     const handle = event => {
-      if (event.type === 'text') answer.text = answer.text ? `${answer.text} ${event.text}` : event.text;
+      if (event.type === 'step') {
+        if (!answered && event.step) steps.set(event.step.id ?? steps.size, event.step);
+        if (!answered && onStep) { try { onStep(event.step); } catch (err) { console.warn('inspector: live step', err); } }
+      } else if (event.type === 'text') answer.text = answer.text ? `${answer.text} ${event.text}` : event.text;
       else if (event.type === 'card' && event.card) answer.cards.push(event.card);
       else if (event.type === 'tool_call' && !answered) {
         io.calls.push({id:event.id, name:event.name, plane:event.plane, by:event.by, args:event.args || {}});
       } else if (event.type === 'tool_result' && !answered) {
         const call = io.calls.find(c => c.id === event.id);
         if (call) Object.assign(call, {ms:event.ms, status:event.status,
-          tables_read:event.tables_read || [], tables_written:event.tables_written || []});
+          tables_read:event.tables_read || [], tables_written:event.tables_written || [],
+          table_planes:event.table_planes || {}});
       } else if (event.type === 'checkpoint' && !answered) {
         io.checkpoints.push({thread:event.thread, tables_written:event.tables_written || []});
       }
@@ -51,6 +60,7 @@ const concierge = {
         error.userMessage = true;
         error.code = event.code;
         error.traceId = event.trace_id;
+        error.steps = [...steps.values()];
         answered = true;
         rejectTurn(error);
       } else if (event.type === 'turn_end') {
@@ -166,7 +176,7 @@ const pharmacyApi = {
   async select(productId, qty) {
     // Selection is UI context. Explicit voice commands use the product name.
   },
-  async command(text, commandId) {
+  async command(text, commandId, onStep = null) {
     if (this.mode !== 'sandbox') throw new Error('Connect to the pharmacy first.');
     const userId = getUserId();
     const sessionId = shoppingSessionId;
@@ -175,7 +185,7 @@ const pharmacyApi = {
     // bills have no text.
     const history = userHistory(userId).filter(m => m.id !== commandId).flatMap(m => m.type === 'turn'
       ? [m.user && {role:'user', content:m.user}, m.reply && m.status === 'answered' && {role:'assistant', content:m.reply}]
-      : [typeof m.text === 'string' && m.text && {role:m.role, content:m.text}]).filter(Boolean).slice(-12);
+      : [typeof m.text === 'string' && m.text && m.kind !== 'greeting' && {role:m.role, content:m.text}]).filter(Boolean).slice(-12);
     // Keep the original user bubble; only resolve an explicit UI reference in
     // the text request. The existing agent owns add/delete/order/refill intent.
     const selected = this.products.find(p => p.id === shop.selected);
@@ -186,12 +196,13 @@ const pharmacyApi = {
     // stays open for the background memory save, which only refreshes the
     // Memory tab.
     const location = locationTurnContext();
-    if (location?.lat != null) console.info('siru: turn sent with location', {lat: location.lat, lng: location.lng});
+    // Whether a location went with the turn - never the coordinates themselves.
+    if (location?.lat != null) console.info('siru: turn sent with location');
     else console.info('siru: turn sent without coordinates - nearest-pharmacy answers will ask for a location');
     const turn = await concierge.turn({
       session_id:sessionId, user_id:userId, locale:currentProfile().language_code, channel:'chat',
       input:{type:'text', text:input}, history, context:{location},
-    });
+    }, onStep);
     return {command_id:commandId, user_id:userId, session_id:sessionId, source:'text', text,
       message:turn.text || 'The assistant returned no response. Check your cart before trying again.',
       trace:turn.trace, cards:turn.cards};

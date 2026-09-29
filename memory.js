@@ -7,7 +7,7 @@
 // item. It never shows chat messages - only the facts kept from them.
 const memoryEl = Object.fromEntries([
   "memoryList", "memoryEmpty", "memoryCount", "memoryCountTop", "memoryStatus",
-  "memoryConsent", "memoryConsentNote", "stmBadge", "stmSummary", "stmRecent", "ltmBusiness",
+  "memoryConsent", "memoryConsentNote", "stmBadge", "stmSummary", "stmRecent", "memoryCart", "memoryOrders",
 ].map(id => [id, document.getElementById(id)]));
 
 const MEMORY_LABELS = {
@@ -117,25 +117,111 @@ async function memoryShortTermRefresh(userId) {
   }
 }
 
-// Long-term business state: the cart and the orders / bookings confirmed in
-// this app, all in the app database - they outlive short-term memory.
-async function memoryBusinessRefresh(userId) {
-  const rows = [];
-  const cart = typeof shop === 'object' ? shop.cart : null;
-  if (cart) rows.push(['Cart', cart.items?.length ? `${cart.items.reduce((n, i) => n + (i.qty || 0), 0)} item(s): ${cart.items.map(i => i.name).join(', ')}` : 'empty']);
-  try {
-    const demo = await apiFetch('/v1/actions/demo');
-    if (getUserId() !== userId) return;
-    rows.push(['Orders confirmed in this app', String((demo.orders || []).length)]);
-    rows.push(['Bookings confirmed in this app', String((demo.bookings || []).length)]);
-  } catch (error) {
-    rows.push(['Orders and bookings', `unavailable - ${pharmacyError(error)}`]);
+// ---------- shopping state, as cards: the cart and the order history ----------
+//
+// Not memory: the cart is the server's cart as it is now (the same normalised
+// cart the cart dialog shows - shopping.js shoppingRenderCart calls
+// memoryCartRender), the orders are what the Orders dialog reads - the SIRU
+// orders (GET /v1/sandbox/orders) and the demo orders confirmed in this app
+// (GET /v1/actions/demo). Nothing here is stored as a remembered fact.
+const STATE_PLACEHOLDER = 'images/medicine.svg';
+
+function stateImage(src) {
+  const img = el_('img', 'state-img');
+  img.alt = '';
+  img.width = 48;
+  img.height = 48;
+  img.loading = 'lazy';
+  img.src = src || STATE_PLACEHOLDER;
+  img.onerror = () => { img.onerror = null; img.src = STATE_PLACEHOLDER; };
+  return img;
+}
+
+function stateItemRow({name, qty, pricePaise, image}) {
+  const row = el_('div', 'state-item');
+  const info = el_('div', 'state-item-info');
+  info.append(el_('strong', '', name || 'Medicine'),
+    el_('span', 'muted small', [pricePaise != null ? money(pricePaise) : 'Price unavailable', `Qty: ${qty || 1}`].join(' · ')));
+  row.append(stateImage(image), info,
+    el_('span', 'state-amount', pricePaise != null ? money(pricePaise * (qty || 1)) : ''));
+  return row;
+}
+
+// The cart as it is now; `cart` is shopping.js's normalised cart (null: not loaded yet).
+function memoryCartRender(cart) {
+  const box = memoryEl.memoryCart;
+  if (!box) return;
+  if (!getUserId() || !cart) {
+    box.replaceChildren(el_('p', 'muted small', getUserId() ? 'Loading the cart…' : 'Sign in to see your cart.'));
+    return;
   }
-  memoryEl.ltmBusiness.replaceChildren(...rows.map(([label, value]) => {
-    const li = el_('li', 'ltm-row');
-    li.append(el_('span', 'ltm-label', label), el_('span', 'ltm-value', value));
-    return li;
-  }));
+  if (!cart.items.length) {
+    box.replaceChildren(el_('p', 'muted small', 'Your cart is empty.'));
+    return;
+  }
+  const card = el_('article', 'state-card');
+  card.append(el_('div', 'state-card-head', 'CART'));
+  for (const item of cart.items) {
+    card.append(stateItemRow({name: item.name, qty: item.qty, pricePaise: item.price_paise, image: item.image_url}));
+  }
+  const foot = el_('div', 'state-card-foot');
+  foot.append(el_('span', '', 'Items total'), el_('strong', '', cart.total_paise != null ? money(cart.total_paise) : 'Price unavailable'));
+  card.append(foot);
+  box.replaceChildren(card);
+}
+
+function orderCard({title, status, source, when, items, totalPaise}) {
+  const card = el_('article', 'state-card');
+  const head = el_('div', 'state-card-head');
+  head.append(el_('span', '', title), el_('span', 'state-status', status));
+  card.append(head);
+  if (source || when) card.append(el_('p', 'muted small state-card-meta', [source, when].filter(Boolean).join(' · ')));
+  for (const item of items || []) {
+    card.append(stateItemRow({name: item.name, qty: item.qty,
+      pricePaise: item.unit_price_paise ?? item.unitPricePaise ?? null,
+      image: item.image_url || pharmacyApi.imageFor(item.name)}));
+  }
+  const foot = el_('div', 'state-card-foot');
+  foot.append(el_('span', '', 'Total'), el_('strong', '', totalPaise != null ? money(totalPaise) : 'Total unavailable'));
+  card.append(foot);
+  return card;
+}
+
+const ORDER_STATUS_WORDS = {CONFIRMED_DEMO: 'Confirmed (demo)'};
+
+function orderStatus(status) {
+  return ORDER_STATUS_WORDS[status] || String(status || 'Unknown').toLowerCase().replace(/_/g, ' ');
+}
+
+function orderWhen(value) {
+  return value ? new Date(value).toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'}) : '';
+}
+
+// The newest orders of both sources, as cards; bookings as a count.
+async function memoryOrdersRefresh(userId) {
+  const box = memoryEl.memoryOrders;
+  if (!box) return;
+  const [siru, demo] = await Promise.allSettled([pharmacyApi.orders(), apiFetch('/v1/actions/demo')]);
+  if (getUserId() !== userId) return;
+  const cards = [];
+  for (const order of (demo.status === 'fulfilled' ? demo.value.orders || [] : [])) {
+    cards.push({at: order.createdAt, card: orderCard({title: `ORDER ${order.id}`, status: orderStatus(order.status),
+      source: 'Demo - saved in this app only', when: orderWhen(order.createdAt), items: order.items, totalPaise: order.totalPaise})});
+  }
+  for (const order of (siru.status === 'fulfilled' && Array.isArray(siru.value) ? siru.value : [])) {
+    cards.push({at: order.createdAt, card: orderCard({title: `ORDER ${order.orderNumber || order.id}`, status: orderStatus(order.status),
+      source: ['SIRU', order.storeName].filter(Boolean).join(' · '), when: orderWhen(order.createdAt),
+      items: order.items, totalPaise: order.orderTotalPaise})});
+  }
+  cards.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+  const shown = cards.slice(0, 5).map(c => c.card);
+  const notes = [];
+  if (siru.status === 'rejected' && demo.status === 'rejected') notes.push("Couldn't load your orders just now.");
+  if (!cards.length && !notes.length) notes.push('No orders yet.');
+  if (cards.length > shown.length) notes.push(`${cards.length - shown.length} older order(s) in My orders.`);
+  const bookings = demo.status === 'fulfilled' ? (demo.value.bookings || []).length : 0;
+  if (bookings) notes.push(`${bookings} booking(s) confirmed in this app.`);
+  box.replaceChildren(...shown, ...notes.map(text => el_('p', 'muted small', text)));
 }
 
 // Reads the user's memory into the tab. `delayed` waits for a turn's
@@ -148,7 +234,8 @@ function memoryRefresh({delayed = false} = {}) {
   const userId = getUserId();
   memoryEl.memoryStatus.textContent = 'Loading…';
   memoryShortTermRefresh(userId);
-  memoryBusinessRefresh(userId);
+  memoryCartRender(typeof shop === 'object' ? shop.cart : null);
+  memoryOrdersRefresh(userId);
   memoryLoading = pharmacyApi.memory()
     .then(data => {
       if (getUserId() !== userId) return;

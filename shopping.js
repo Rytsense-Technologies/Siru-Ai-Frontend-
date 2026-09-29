@@ -22,6 +22,9 @@ const shop = {
   billedKey: null, billQueue: Promise.resolve(),
   // turn id -> {id, el, record}: the chat block each turn's output goes into.
   turns: new Map(),
+  // The server's bill for the cart as it is ({key, snapshot}) - its delivery
+  // fee and store, shown in the cart dialog while the cart is unchanged.
+  bill: null,
 };
 const shopEl = Object.fromEntries([
   "medicineList", "selectedMedicine", "chatMessages", "cartItems", "cartTotal",
@@ -30,8 +33,83 @@ const shopEl = Object.fromEntries([
   "activityClose", "liveTranscript", "toolsTab", "memoryTab", "toolsTabBtn", "memoryTabBtn",
   "activityIgnored", "micFilters", "dataTab", "dataTabBtn", "dataList", "dataEmpty", "dataCount", "dataVoiceNote",
   "inspectorSub", "statTools", "statToolsSplit", "statTables", "statWrites", "statModel", "statTokens",
+  "cartDialog", "cartBtn", "cartBill", "cartDialogNote", "cartConfirm", "cartTotalLabel",
 ].map(id => [id, document.getElementById(id)]));
 const money = paise => paise == null ? 'Price unavailable' : new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(paise / 100);
+
+// ---------- the cart and checkout, only when needed ----------
+//
+// The cart is a dialog (index.html #cartDialog), not a panel beside the
+// conversation. It opens when a turn changed the cart, or prepared an order,
+// payment or refill basket to confirm - and from the Cart button. What it
+// shows is the server's cart and bill; nothing is decided here.
+const CHECKOUT_ACTIONS = new Set(['order', 'payment', 'refill_basket']);
+
+function cartDialogShow({note = '', confirm = null} = {}) {
+  if (!getUserId() || isMerchant()) return;
+  shopEl.cartDialogNote.textContent = note;
+  if (confirm) {
+    // Its own Confirm / Cancel (the chat keeps its copy): a second tap is
+    // refused by the server ("already"), never done twice.
+    const entry = shoppingConfirmCard(confirm);
+    shopEl.cartConfirm.replaceChildren(entry.querySelector('.confirm-card') || entry);
+    shopEl.cartConfirm.hidden = false;
+  } else if (!shopEl.cartDialog.open) {
+    shopEl.cartConfirm.replaceChildren();
+    shopEl.cartConfirm.hidden = true;
+  }
+  if (!shopEl.cartDialog.open) shopEl.cartDialog.showModal();
+  cartBillEnsure();
+}
+
+// The server's bill (delivery, store) for the cart as it is, when the dialog
+// has none yet - e.g. opened from the Cart button after a reload.
+async function cartBillEnsure() {
+  const cart = shop.cart;
+  if (!cart?.items.length || !pharmacyApi.mode || (shop.bill && shop.bill.key === shoppingCartKey(cart))) return;
+  const generation = shop.generation;
+  try {
+    const data = await pharmacyApi.bill();
+    if (generation !== shop.generation) return;
+    shop.bill = {key: shoppingCartKey(data.cart), snapshot: shoppingBillSnapshot(data)};
+    shoppingRenderCart(data.cart);
+  } catch {
+    // No bill: the dialog keeps showing the items' total, labelled as such.
+  }
+}
+
+// The bill's store, delivery and address for the cart as it is now.
+function cartBillRender(snapshot) {
+  const bill = shopEl.cartBill;
+  bill.replaceChildren();
+  if (snapshot && snapshot.items.length) {
+    const lines = [];
+    if (snapshot.store) lines.push(['Pharmacy', snapshot.store]);
+    if (snapshot.delivery_paise != null) {
+      lines.push(['Subtotal', money(snapshot.subtotal_paise)]);
+      lines.push(['Delivery', snapshot.delivery_paise === 0 ? 'Free' : money(snapshot.delivery_paise)]);
+    }
+    if (snapshot.coins_paise) lines.push(['SIRU coins (available)', money(snapshot.coins_paise)]);
+    for (const [name, value] of lines) {
+      const line = el_('div', 'bill-line');
+      line.append(el_('span', '', name), el_('span', '', value));
+      bill.append(line);
+    }
+    if (snapshot.address) {
+      const address = el_('p', 'bill-address');
+      address.append(icon('pin'), document.createTextNode(snapshot.address));
+      bill.append(address);
+    }
+  }
+  bill.hidden = !bill.children.length;
+}
+
+// A placed order's receipt, centred - the chat keeps a one-line record of it.
+function orderDialogShow(snapshot) {
+  document.getElementById('orderSummary').replaceChildren(shoppingBillCard(snapshot));
+  if (shopEl.cartDialog.open) shopEl.cartDialog.close();
+  if (!shopEl.orderDialog.open) shopEl.orderDialog.showModal();
+}
 
 // "commerce_agent" -> "Commerce agent"
 function agentLabel(name) {
@@ -75,7 +153,9 @@ function chatEntry({role = 'assistant', label = '', agent = '', time = null, cla
 
 // A message outside any turn: the greeting, "could you say that again",
 // connection notices. Saved in the chat history.
-function shoppingMessage(text, role = "assistant", source = "text", id = crypto.randomUUID(), savedTime = null, restore = false) {
+// `kind` 'greeting': the sign-in welcome and the voice greeting - shown and
+// kept with the chat, but UI events, never sent to the assistant as history.
+function shoppingMessage(text, role = "assistant", source = "text", id = crypto.randomUUID(), savedTime = null, restore = false, kind = null) {
   if (!getUserId()) return document.createElement('div');
   const existing = shopEl.chatMessages.querySelector(`.chat-bubble[data-message-id="${CSS.escape(id)}"]`);
   if (existing) return existing;
@@ -85,7 +165,7 @@ function shoppingMessage(text, role = "assistant", source = "text", id = crypto.
   entry.append(bubble);
   shopEl.chatMessages.appendChild(entry);
   chatScroll(!restore);
-  if (!restore) userSaveMessage(getUserId(), {id, role, text, source, timestamp: iso});
+  if (!restore) userSaveMessage(getUserId(), {id, role, text, source, timestamp: iso, ...(kind ? {kind} : {})});
   return bubble;
 }
 
@@ -100,6 +180,168 @@ function shoppingNotice(text, source = 'text') {
 
 function turnSave(turn) {
   if (turn.owner) userSaveMessage(turn.owner, turn.record);
+}
+
+// ---------- what Siru is doing, live, in the conversation ----------
+//
+// The same streamed trace steps the inspector draws (SSE `step`, tracing.py),
+// shown to the user in their words: only steps the server actually reported,
+// each as it runs and as it ended (success, failed, timed out). A turn whose
+// only work was answering shows none - the "Siru is working…" line goes as
+// before. The inspector keeps the developer detail (inputs, tables, tokens).
+
+// Display names of the real tools (python-assistant graph/tool_dispatch.py and
+// merchant_tool_dispatch.py, direct_tools.py, tracing.py's service steps).
+// A tool not listed is still shown, by its own name made readable.
+const TOOL_LABELS = {
+  search_products: 'Searching products', find_prescription_items: 'Matching your prescription',
+  browse_store: 'Browsing the store', list_stores: 'Finding stores', view_cart: 'Checking your cart',
+  add_to_cart: 'Adding to cart', clear_cart: 'Clearing the cart', remove_from_cart: 'Removing from cart',
+  present_options: 'Preparing options', present_card: 'Preparing a card', present_bill: 'Preparing the bill',
+  list_orders: 'Checking your orders', track_order: 'Tracking your order', create_order: 'Preparing order',
+  save_prescription_for_review: 'Saving your prescription', check_prescription_status: 'Checking your prescription',
+  check_valid_prescription: 'Checking your prescription', today_home: 'Loading your day',
+  add_household_member: 'Adding a family member', doctor_slots: 'Finding doctor slots',
+  select_consult_mode: 'Choosing the consultation', book_appointment: 'Booking the appointment',
+  my_appointments: 'Checking your appointments', cancel_appointment: 'Cancelling the appointment',
+  list_service_providers: 'Finding service providers', service_slots: 'Finding service slots',
+  book_service: 'Booking the service', my_service_bookings: 'Checking your bookings',
+  cancel_service_booking: 'Cancelling the booking', refills: 'Checking your refills', rewards: 'Checking your rewards',
+  rank_pharmacies: 'Ranking nearby pharmacies', list_doctors: 'Finding doctors',
+  connect_pharmacist: 'Connecting a pharmacist', emergency_info: 'Getting emergency help',
+  add_product: 'Adding a product', add_offered_product: 'Adding the offered product',
+  find_nearby_pharmacy: 'Finding the nearest pharmacy', nearby_pharmacies: 'Finding nearby pharmacies',
+  doctors_available: 'Checking available doctors', refill_basket: 'Preparing your refill',
+  upi_request: 'Preparing the UPI request', memory_recall: 'Checking your memory', memory_off: 'Pausing memory',
+  memory_on: 'Turning memory on', memory_forget: 'Forgetting', dose_safety: 'Checking dose safety',
+  record_allergy: 'Recording your allergy', offer_decline: 'Noting your choice',
+  rx_readback_confirm: 'Confirming the prescription', rx_readback_decline: 'Noting your correction',
+  store_switch_confirm: 'Switching the store',
+  confirm_order_by_voice: 'Confirming your order', cancel_order_by_voice: 'Cancelling the prepared order',
+  open_cart: 'Opening your cart', open_orders: 'Opening your orders',
+  prepare_action: 'Preparing it for your OK', confirm_action: 'Doing what you confirmed',
+  notify_contact: 'Alerting your contact', request_upi_payment: 'Requesting the UPI payment',
+  extract_prescription: 'Reading the prescription', predict_reorder: 'Checking what you may need again',
+  rank_for_user: 'Ranking for you',
+  get_catalog_summary: 'Checking the catalog', get_dashboard_summary: 'Loading the dashboard',
+  get_earnings: 'Checking earnings', get_low_stock: 'Checking low stock', get_top_items: 'Finding top items',
+};
+const AGENT_LABELS = {care_agent: 'Health assistant', commerce_agent: 'Shopping assistant',
+  booking_agent: 'Booking assistant', merchant_agent: 'Store assistant'};
+// Long-term memory steps worth telling the user; the rest (short-term, "considered"...) stay in the inspector.
+const ACTIVITY_MEMORY_LABELS = {recalled: 'Checking your memory', saved: 'Saving to memory', forgotten: 'Forgetting', failed: 'Saving to memory'};
+
+function readableName(name) {
+  const text = String(name || '').replace(/^direct_tool:/, '').replace(/[_:.-]+/g, ' ').trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : 'Working';
+}
+
+// A step's line for the user, or null when it isn't one to show.
+function activityLabel(step) {
+  if (!step) return null;
+  if (step.kind === 'tool' || step.kind === 'direct_tool') return TOOL_LABELS[step.name] || readableName(step.name);
+  if (step.kind === 'agent') return AGENT_LABELS[step.name] || readableName(step.name);
+  if (step.kind === 'llm') return 'Thinking';
+  if (step.kind === 'memory' && step.store !== 'redis') return ACTIVITY_MEMORY_LABELS[step.name] || null;
+  return null;  // routing, guards, checkpoints, short-term memory: the inspector's
+}
+
+// running, success, failed, timeout - as the step said; never assumed.
+const ACTIVITY_STATES = {running: 'running', done: 'success', error: 'failed', failed: 'failed', timeout: 'timeout',
+  fallback: 'fell back', skipped: 'skipped', unavailable: 'unavailable'};
+const ACTIVITY_WORDS = {running: 'running', success: 'done', failed: 'failed', timeout: 'timed out',
+  'fell back': 'fell back', skipped: 'skipped', unavailable: 'unavailable', stopped: 'stopped', unfinished: 'not finished'};
+
+function activityState(step) {
+  return ACTIVITY_STATES[step.status || 'done'] || 'success';
+}
+
+function turnActivityRow(label, state) {
+  const row = el_('li', `activity-step state-${state.replace(/\s+/g, '-')}`);
+  row.append(el_('span', 'activity-mark', ''), el_('span', 'activity-label', label),
+    el_('span', 'activity-state', ACTIVITY_WORDS[state] || state));
+  row.querySelector('.activity-mark').setAttribute('aria-hidden', 'true');
+  return row;
+}
+
+// The turn's activity block: "Siru is working…" until a real step arrives.
+function turnActivityNode() {
+  const box = el_('details', 'turn-pending turn-activity');
+  const summary = el_('summary');
+  summary.append(el_('span', 'activity-spinner', ''), el_('span', 'activity-title', 'Siru is working…'),
+    el_('span', 'activity-counter', ''));
+  summary.querySelector('.activity-spinner').setAttribute('aria-hidden', 'true');
+  box.append(summary, el_('ol', 'activity-steps'));
+  box.setAttribute('aria-live', 'polite');
+  box.open = true;  // its steps show as they come; collapsed once the turn is done
+  return box;
+}
+
+function turnActivitySummary(box) {
+  const rows = [...box.querySelectorAll('.activity-step')];
+  const counter = box.querySelector('.activity-counter');
+  counter.textContent = rows.length ? `${rows.length} step${rows.length === 1 ? '' : 's'}` : '';
+  box.classList.toggle('has-steps', rows.length > 0);
+}
+
+// A streamed step: added, or its row updated (same id) as it ends.
+function turnActivityStep(turn, step) {
+  const box = turn?.el.querySelector('.turn-activity');
+  const label = activityLabel(step);
+  if (!box || !label) return;
+  turn.activity = turn.activity || new Map();
+  turn.activityDirect = turn.activityDirect || new Set();
+  // A deterministic route's step and the tool call it makes share a name
+  // ("clear_cart"): one row, the route's, stands for both.
+  if (step.kind === 'direct_tool') turn.activityDirect.add(step.name);
+  else if (step.kind === 'tool' && turn.activityDirect.has(step.name)) return;
+  const key = step.id ?? `${step.kind}:${step.name}:${turn.activity.size}`;
+  const row = turnActivityRow(label, activityState(step));
+  const earlier = turn.activity.get(key);
+  if (earlier) earlier.replaceWith(row);
+  else box.querySelector('.activity-steps').append(row);
+  turn.activity.set(key, row);
+  turnActivitySummary(box);
+}
+
+// The answer (or its failure) arrived: collapsed to one line, kept with the
+// turn. A step still running then was never reported finished - "stopped" if
+// the turn failed, "not finished" otherwise - never counted a success.
+function turnActivityFinish(turn, {failed = false, steps = null} = {}) {
+  const box = turn.el.querySelector('.turn-activity');
+  if (!box) return;
+  if (!turn.activity?.size && Array.isArray(steps)) {
+    for (const step of steps) turnActivityStep(turn, step);  // a voice turn's steps come with its result
+  }
+  const rows = [...box.querySelectorAll('.activity-step')];
+  if (!rows.length) {
+    box.remove();  // nothing real to show
+    return;
+  }
+  for (const row of rows.filter(r => r.classList.contains('state-running'))) {
+    row.replaceWith(turnActivityRow(row.querySelector('.activity-label').textContent, failed ? 'stopped' : 'unfinished'));
+  }
+  const final = [...box.querySelectorAll('.activity-step')];
+  const problems = final.filter(r => /state-(failed|timeout|stopped)/.test(r.className)).length;
+  box.classList.remove('turn-pending');
+  box.classList.add('done', problems || failed ? 'has-problems' : 'all-ok');
+  box.open = false;
+  box.querySelector('.activity-title').textContent = failed ? 'Stopped' : 'Completed';
+  box.querySelector('.activity-counter').textContent = [`${final.length} step${final.length === 1 ? '' : 's'}`,
+    problems ? `${problems} with a problem` : ''].filter(Boolean).join(' · ');
+  turn.record.activity = final.map(r => ({label: r.querySelector('.activity-label').textContent,
+    state: (r.className.match(/state-([\w-]+)/) || [])[1] || 'success'}));
+}
+
+// A saved turn's activity, collapsed, as it ended.
+function turnActivityRestore(record) {
+  const box = turnActivityNode();
+  box.classList.remove('turn-pending');
+  box.classList.add('done', record.activity.some(a => /failed|timeout|stopped/.test(a.state)) ? 'has-problems' : 'all-ok');
+  for (const {label, state} of record.activity) box.querySelector('.activity-steps').append(turnActivityRow(label, state.replace(/-/g, ' ')));
+  box.querySelector('.activity-title').textContent = record.status === 'failed' ? 'Stopped' : 'Completed';
+  box.querySelector('.activity-counter').textContent = `${record.activity.length} step${record.activity.length === 1 ? '' : 's'}`;
+  return box;
 }
 
 // The block for a turn: created with the user's message when the turn starts
@@ -119,7 +361,7 @@ function shoppingTurn(turnId, {userText = '', source = 'text', time = null} = {}
   const turn = {id: turnId, el, record: saved, owner: getUserId()};
   shop.turns.set(turnId, turn);
   if (!record) {
-    el.append(el_('div', 'turn-pending', 'Siru is working…'));
+    el.append(turnActivityNode());
     turnSave(turn);
     chatScroll(true);
   }
@@ -156,7 +398,7 @@ function shoppingTurnFinish(turnId, {status = 'answered', reply = '', agent = ''
   if (!getUserId()) return;
   const turn = shoppingTurn(turnId);
   if (turn.record.status !== 'pending') return;  // one result per turn
-  turn.el.querySelector('.turn-pending')?.remove();
+  turnActivityFinish(turn, {failed: status === 'failed', steps: trace?.steps || null});
   agent = agent || trace?.agent || '';
   const time = new Date().toISOString();
   Object.assign(turn.record, {status, reply, agent, replied_at: time, has_trace: Boolean(trace),
@@ -167,6 +409,14 @@ function shoppingTurnFinish(turnId, {status = 'answered', reply = '', agent = ''
   if (trace) shoppingActivityAdd(turn, trace);
   for (const card of turn.record.cards) turnAppend(turn, shoppingUiCard(card, time));
   turnSave(turn);
+  // "Open my cart" / "open my orders" (the pre-router's open_view): the window
+  // opens only on such an explicit request - every other cart or order answer
+  // stays in the chat, with its Confirm card there (Open Cart shows it too).
+  const open = turn.record.cards.find(card => card?.kind === 'open_view');
+  if (open && status === 'answered' && turn.owner === getUserId()) {
+    if (open.view === 'orders') shoppingOrders();
+    else cartDialogShow({confirm: shoppingPendingCheckout()});
+  }
   chatScroll(turn.el === shopEl.chatMessages.lastElementChild);
   const placed = (trace?.steps || []).find(step => step.kind === 'tool' && step.name === 'create_order'
     && step.status === 'done' && step.result?.status === 'placed');
@@ -277,7 +527,6 @@ function shoppingControls() {
   document.querySelectorAll(".add-product, .remove-product").forEach(b => { b.disabled = disabled; });
   shopEl.clearCartBtn.disabled = disabled || !shop.cart.items.length;
   shopEl.placeOrderBtn.disabled = disabled || !shop.cart.items.length;
-  document.querySelectorAll('.pay-btn').forEach(b => { b.disabled = disabled || !shop.cart.items.length; });
   shoppingMarkInCart();
   shoppingStatus();
 }
@@ -303,8 +552,18 @@ function shoppingRenderCart(cart) {
       </div>
     </div>`).join("") : '<div class="empty-cart"><span class="empty-cart-icon" data-icon="bag" aria-hidden="true"></span><p>Your cart is empty.</p><small>Say or type a medicine\'s name to get started.</small></div>';
   iconsHydrate(shopEl.cartItems);
-  shopEl.cartTotal.textContent = money(cart.total_paise);
-  shopEl.cartCount.textContent = cart.items.reduce((n, item) => n + item.qty, 0);
+  // The bill (delivery, store) while it is for this very cart; else the items' total.
+  const bill = shop.bill && shop.bill.key === shoppingCartKey(cart) ? shop.bill.snapshot : null;
+  cartBillRender(bill);
+  const total = bill?.total_paise ?? cart.total_paise;
+  shopEl.cartTotal.textContent = money(total);
+  // Without the server's bill it is the items only - no delivery - and says so.
+  shopEl.cartTotalLabel.textContent = bill || !cart.items.length ? 'Total' : 'Items total';
+  const count = cart.items.reduce((n, item) => n + item.qty, 0);
+  shopEl.cartCount.textContent = count;
+  shopEl.cartBtn.setAttribute('aria-label', `Cart, ${count} item${count === 1 ? '' : 's'}`);
+  shopEl.placeOrderBtn.textContent = cart.items.length ? `Place demo order · ${money(total)}` : 'Place demo order';
+  if (typeof memoryCartRender === 'function') memoryCartRender(cart);  // the Memory tab's cart card
   shopEl.cartItems.querySelectorAll(".remove-product").forEach(button => {
     button.onclick = () => shoppingSubmit(`Remove ${cart.items.find(p => p.id === button.dataset.id).name}`);
   });
@@ -331,7 +590,9 @@ function shoppingTurnReceipts(turn, order) {
     if (!getUserId() || !pharmacyApi.mode || turn.owner !== getUserId()) return;
     const generation = shop.generation;
     if (order) {
-      turnReceipt(turn, shoppingOrderSnapshot(order));
+      // The receipt in the chat (its View button opens the order); no popup.
+      const snapshot = shoppingOrderSnapshot(order);
+      turnReceipt(turn, snapshot);
       if (ordersEl.dialog.open) shoppingOrders();
     }
     let data;
@@ -342,13 +603,15 @@ function shoppingTurnReceipts(turn, order) {
       return;
     }
     if (generation !== shop.generation) return;
+    const key = shoppingCartKey(data.cart);
+    const snapshot = shoppingBillSnapshot(data);
+    shop.bill = {key, snapshot};
     shoppingRenderCart(data.cart);
     shopEl.cartStatus.textContent = 'Cart synced';
-    const key = shoppingCartKey(data.cart);
     if (key === shop.billedKey) return;
     shop.billedKey = key;
     // The order's receipt already shows what happened to the cart.
-    if (!order) turnReceipt(turn, shoppingBillSnapshot(data));
+    if (!order) turnReceipt(turn, snapshot);
   });
   return shop.billQueue;
 }
@@ -396,70 +659,66 @@ function shoppingOrderSnapshot(order) {
   };
 }
 
-// The bill (or order receipt) card, as a chat entry for the caller to place.
-// Only the newest bill keeps its Pay button; older ones are marked stale.
+// A bill or order receipt in the chat: one line, what happened - the full
+// card is in the cart dialog (a bill) or the order dialog (an order).
 function shoppingBillMessage(snapshot, time = null) {
   const isOrder = snapshot.kind === 'order';
-  if (!isOrder) shopEl.chatMessages.querySelectorAll('.bill-card:not(.order-card)').forEach(card => card.classList.add('stale'));
-  const {entry} = chatEntry({label: isOrder ? 'Order' : 'Bill', time, className: 'bill-entry'});
-
-  const card = el_('div', isOrder ? 'bill-card order-card' : 'bill-card');
-  const title = isOrder ? `Order ${snapshot.number} placed` : 'Bill';
-  card.append(el_('div', 'bill-head', snapshot.store ? `${title} · ${snapshot.store}` : title));
-
-  if (!snapshot.items.length) {
-    card.append(el_('p', 'bill-empty', 'Your cart is now empty.'));
-  } else {
-    for (const item of snapshot.items) {
-      const row = el_('div', 'bill-item');
-      const image = el_('img');
-      image.src = item.image_url;
-      image.alt = '';
-      image.width = 44;
-      image.height = 44;
-      const info = el_('div', 'bill-item-info');
-      info.append(el_('strong', '', item.name),
-        el_('span', '', [item.pack, `${item.qty} × ${money(item.price_paise)}`].filter(Boolean).join(' · ')));
-      row.append(image, info, el_('span', 'bill-amount', money(item.line_paise)));
-      card.append(row);
-    }
-    const lines = [];
-    if (snapshot.delivery_paise != null) {
-      lines.push(['Subtotal', money(snapshot.subtotal_paise)]);
-      lines.push(['Delivery', snapshot.delivery_paise === 0 ? 'Free' : money(snapshot.delivery_paise)]);
-    }
-    if (snapshot.coins_paise) lines.push(['SIRU coins (available)', money(snapshot.coins_paise)]);
-    lines.push(['Total', money(snapshot.total_paise)]);
-    const summary = el_('div', 'bill-summary');
-    for (const [name, value] of lines) {
-      const line = el_('div', name === 'Total' ? 'bill-line bill-total' : 'bill-line');
-      line.append(el_('span', '', name), el_('span', '', value));
-      summary.append(line);
-    }
-    card.append(summary);
+  const {entry} = chatEntry({label: isOrder ? 'Order' : 'Cart', time, className: 'bill-entry'});
+  const count = snapshot.items.reduce((n, item) => n + (item.qty || 0), 0);
+  const what = isOrder ? `Order ${snapshot.number} placed`
+    : count ? `Cart updated · ${count} item${count === 1 ? '' : 's'}` : 'Your cart is now empty';
+  const line = el_('div', isOrder ? 'receipt-line order-line' : 'receipt-line');
+  line.append(el_('span', 'receipt-text', [what, count && snapshot.total_paise != null ? money(snapshot.total_paise) : '',
+    snapshot.store].filter(Boolean).join(' · ')));
+  if (isOrder || count) {
+    const open = el_('button', 'link-btn', isOrder ? 'View in My orders' : 'Review cart');
+    open.type = 'button';
+    open.onclick = isOrder ? () => shoppingOrders() : () => cartDialogShow();
+    line.append(open);
   }
-  if (snapshot.address && snapshot.items.length) {
+  entry.append(line);
+  return entry;
+}
+
+// The full bill or order receipt (the order dialog's summary).
+function shoppingBillCard(snapshot) {
+  const isOrder = snapshot.kind === 'order';
+  const card = el_('div', isOrder ? 'bill-card order-card' : 'bill-card');
+  const title = isOrder ? `Order ${snapshot.number}` : 'Bill';
+  card.append(el_('div', 'bill-head', snapshot.store ? `${title} · ${snapshot.store}` : title));
+  for (const item of snapshot.items) {
+    const row = el_('div', 'bill-item');
+    const image = el_('img');
+    image.src = item.image_url;
+    image.alt = '';
+    image.width = 44;
+    image.height = 44;
+    const info = el_('div', 'bill-item-info');
+    info.append(el_('strong', '', item.name),
+      el_('span', '', [item.pack, `${item.qty} × ${money(item.price_paise)}`].filter(Boolean).join(' · ')));
+    row.append(image, info, el_('span', 'bill-amount', money(item.line_paise)));
+    card.append(row);
+  }
+  const lines = [];
+  if (snapshot.delivery_paise != null) {
+    lines.push(['Subtotal', money(snapshot.subtotal_paise)]);
+    lines.push(['Delivery', snapshot.delivery_paise === 0 ? 'Free' : money(snapshot.delivery_paise)]);
+  }
+  lines.push(['Total', money(snapshot.total_paise)]);
+  const summary = el_('div', 'bill-summary');
+  for (const [name, value] of lines) {
+    const line = el_('div', name === 'Total' ? 'bill-line bill-total' : 'bill-line');
+    line.append(el_('span', '', name), el_('span', '', value));
+    summary.append(line);
+  }
+  card.append(summary);
+  if (snapshot.address) {
     const address = el_('p', 'bill-address');
     address.append(icon('pin'), document.createTextNode(snapshot.address));
     card.append(address);
   }
-  if (isOrder) {
-    const view = el_('button', 'link-btn', 'View in My orders');
-    view.type = 'button';
-    view.onclick = shoppingOrders;
-    card.append(el_('p', 'order-note', `Status: ${String(snapshot.status).toLowerCase()} · Demo order, no payment taken.`), view);
-  } else {
-    if (snapshot.items.length && snapshot.total_paise != null) {
-      // Places the order (create_order). A demo: no UPI request, nothing charged.
-      const pay = el_('button', 'pay-btn', `Pay ${money(snapshot.total_paise)} with UPI`);
-      pay.type = 'button';
-      pay.onclick = () => shoppingSubmit('Place order');
-      card.append(pay, el_('p', 'pay-note', 'Demo payment: nothing is charged.'));
-    }
-    card.append(el_('p', 'bill-stale-note', 'Updated below'));
-  }
-  entry.append(card);
-  return entry;
+  if (isOrder) card.append(el_('p', 'order-note', `Status: ${String(snapshot.status).toLowerCase()}`));
+  return card;
 }
 
 // ---------- a turn's cards (user_service/ui_cards.py) ----------
@@ -560,6 +819,7 @@ function actionOutcome(data) {
 function shoppingConfirmCard(card, time) {
   const {entry} = chatEntry({label: 'Needs your OK', time, className: 'card-entry'});
   const box = el_('div', 'chat-card confirm-card');
+  box.dataset.actionId = card.actionId || '';
   box.append(el_('div', 'card-eyebrow', card.title || 'Please confirm'));
   for (const row of card.rows || []) {
     const line = el_('div', 'confirm-row');
@@ -600,6 +860,142 @@ function shoppingConfirmCard(card, time) {
   return entry;
 }
 
+// ---------- the cart and the orders, in the chat ----------
+//
+// "What's in my cart?" / "show my orders": the server's own records
+// (ui_cards.cart_summary / order_list) drawn with the bill card the cart and
+// order windows use. Images: the item's own, else its catalog image, else the
+// placeholder (pharmacyApi.imageFor). Nothing here computes a price.
+
+// The latest Confirm card of an order still waiting in this chat (for Open Cart).
+function shoppingPendingCheckout() {
+  const cards = [...shopEl.chatMessages.querySelectorAll('.confirm-card[data-action-id]')]
+    .filter(box => box.querySelector('.confirm-actions'));
+  const last = cards[cards.length - 1];
+  const record = last && shoppingCardRecord(last.dataset.actionId);
+  return record && CHECKOUT_ACTIONS.has(record.action) ? record : null;
+}
+
+function shoppingCardRecord(actionId) {
+  for (const turn of shop.turns.values()) {
+    const found = (turn.record?.cards || []).find(card => card?.kind === 'confirm_action' && card.actionId === actionId);
+    if (found) return found;
+  }
+  return null;
+}
+
+function shoppingStoreName(storeId) {
+  return shop.products.find(p => p.store_id === storeId)?.store_name
+    || pharmacyApi.products.find(p => p.store_id === storeId)?.store_name || '';
+}
+
+function shoppingCardActions(buttons) {
+  const bar = el_('div', 'card-actions');
+  for (const [label, onclick, ghost] of buttons) {
+    const button = el_('button', ghost ? 'card-action ghost' : 'card-action', label);
+    button.type = 'button';
+    button.onclick = onclick;
+    bar.append(button);
+  }
+  return bar;
+}
+
+function shoppingCartSummaryCard(card, time) {
+  const {entry} = chatEntry({label: 'Cart', time, className: 'card-entry'});
+  const box = el_('div', 'chat-card cart-summary-card');
+  box.append(el_('div', 'card-eyebrow', 'Cart'));
+  if (!(card.items || []).length) {
+    box.append(el_('p', 'card-note', 'Your cart is empty.'));
+  } else {
+    const snapshot = {
+      store: shoppingStoreName(card.storeId), address: '',
+      items: card.items.map(item => ({
+        name: item.name, pack: '', qty: item.qty, image_url: item.imageUrl || pharmacyApi.imageFor(item.name),
+        price_paise: item.unitPricePaise, line_paise: item.lineTotalPaise,
+      })),
+      subtotal_paise: card.subtotalPaise, delivery_paise: card.deliveryPaise ?? null, coins_paise: null,
+      total_paise: card.totalPaise ?? card.subtotalPaise,
+    };
+    box.append(shoppingBillCard(snapshot));
+  }
+  box.append(shoppingCardActions([
+    ['Open Cart', () => cartDialogShow({confirm: shoppingPendingCheckout()})],
+    ['Continue Shopping', () => { el.askInput.focus(); }, true],
+  ]));
+  entry.append(box);
+  return entry;
+}
+
+const ORDER_SOURCE_NOTE = {demo: 'Demo - saved in this app only', siru: 'SIRU order'};
+
+function shoppingOrderListCard(card, time) {
+  const {entry} = chatEntry({label: 'Orders', time, className: 'card-entry'});
+  const box = el_('div', 'chat-card order-list-card');
+  box.append(el_('div', 'card-eyebrow', card.total > (card.orders || []).length
+    ? `Orders · newest ${card.orders.length} of ${card.total}` : 'Orders'));
+  if (!(card.orders || []).length) box.append(el_('p', 'card-note', 'No orders yet.'));
+  for (const order of card.orders || []) {
+    const snapshot = {
+      kind: 'order', number: order.number || '', status: ORDER_STATUS_WORDS[order.status] || order.status || '',
+      store: order.storeName || '', address: '',
+      items: (order.items || []).map(item => ({
+        name: item.name, pack: '', qty: item.qty, image_url: item.imageUrl || pharmacyApi.imageFor(item.name),
+        price_paise: item.unitPricePaise ?? null,
+        line_paise: item.unitPricePaise == null ? null : item.unitPricePaise * item.qty,
+      })),
+      subtotal_paise: order.subtotalPaise ?? null, delivery_paise: order.deliveryPaise ?? null, coins_paise: null,
+      total_paise: order.totalPaise ?? null,
+    };
+    const bill = shoppingBillCard(snapshot);
+    const when = order.createdAt ? new Date(order.createdAt).toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'}) : '';
+    bill.append(el_('p', 'muted small order-meta', [ORDER_SOURCE_NOTE[order.source], when].filter(Boolean).join(' · ')));
+    bill.append(shoppingCardActions([
+      ['View Order', () => orderDialogShow(snapshot)],
+      ['Open Orders', () => shoppingOrders(), true],
+    ]));
+    box.append(bill);
+  }
+  entry.append(box);
+  return entry;
+}
+
+// "Open my cart" / "open my orders": the window opens (shoppingTurnFinish);
+// the chat keeps a one-line note, not a second copy of it.
+function shoppingOpenViewCard(card, time) {
+  const {entry} = chatEntry({label: card.view === 'orders' ? 'Orders' : 'Cart', time, className: 'bill-entry'});
+  const line = el_('div', 'receipt-line');
+  const open = el_('button', 'link-btn', card.view === 'orders' ? 'Open Orders' : 'Open Cart');
+  open.type = 'button';
+  open.onclick = card.view === 'orders' ? () => shoppingOrders() : () => cartDialogShow({confirm: shoppingPendingCheckout()});
+  line.append(el_('span', 'receipt-text', card.view === 'orders' ? 'Your orders window' : 'Your cart window'), open);
+  entry.append(line);
+  return entry;
+}
+
+// An order confirmed by a spoken "yes" to its read-back (actions/spoken_confirm.py):
+// the server's confirm result, said as a tap's would be. Every copy of that
+// order's Confirm card (the chat's, the cart dialog's) is settled, and the
+// cart, the Orders dialog and the Memory tab's order cards are read again.
+function shoppingOrderConfirmedCard(card, time) {
+  const {entry} = chatEntry({label: 'Order confirmed by voice', time, className: 'card-entry'});
+  const box = el_('div', 'chat-card confirm-card');
+  const outcome = actionOutcome({order: card.order || {}, replayed: card.replayed});
+  box.append(el_('div', 'card-eyebrow', 'Confirmed'), el_('p', 'card-note', outcome));
+  entry.append(box);
+  if (card.actionId) {
+    document.querySelectorAll(`.confirm-card[data-action-id="${CSS.escape(card.actionId)}"]`).forEach(other => {
+      other.querySelector('.confirm-actions')?.remove();
+      const note = other.querySelector('.card-note');
+      if (note) note.textContent = `Confirmed by voice. ${outcome}`;
+    });
+  }
+  queueMicrotask(() => {
+    shoppingRefresh();
+    if (ordersEl.dialog.open) shoppingOrders();
+  });
+  return entry;
+}
+
 // A proactive check-in (proactive/checkins.py), with its prepared basket if any.
 function shoppingCheckinCard(card, time) {
   const {entry} = chatEntry({label: 'Check-in', time, className: 'card-entry'});
@@ -637,6 +1033,87 @@ function shoppingDoctorSlotsCard(card, time) {
     box.append(row);
   }
   box.append(el_('p', 'card-note', 'Tapping a time only prepares the booking. You confirm it next.'));
+  entry.append(box);
+  return entry;
+}
+
+// A buyer tool's own card (backend ui_cards.from_agent_cards): list_doctors,
+// emergency_info, connect_pharmacist, ... - header / paragraph / note / list /
+// actions blocks. Text only, never HTML. A button sends its `value` as the
+// next message - the same as typing it, so every guard still applies - and
+// only for intents that ask for something; ones that change or cancel
+// something are left to the chat, where they are confirmed. A call is a tel: link.
+const UI_CARD_REQUEST_INTENTS = new Set(['book_appointment', 'book_service', 'select_pharmacy',
+  'check_prescription_status', 'my_appointments', 'my_service_bookings', 'shop']);
+const UI_CARD_CALL_INTENTS = new Set(['call', 'call_emergency']);
+
+function uiCardButton(action) {
+  if (!action || !action.label) return null;
+  const tel = String(action.payload?.tel || '').replace(/[^\d+]/g, '');
+  if (UI_CARD_CALL_INTENTS.has(action.intent) && tel) {
+    const link = el_('a', `card-action ${action.style === 'danger' ? 'danger' : 'ghost'}`, action.label);
+    link.href = `tel:${tel}`;
+    return link;
+  }
+  if (!UI_CARD_REQUEST_INTENTS.has(action.intent) || !action.value) return null;
+  const button = el_('button', `card-action ${action.style === 'primary' ? '' : 'ghost'}`.trim(), action.label);
+  button.type = 'button';
+  button.onclick = () => shoppingSubmit(String(action.value));
+  return button;
+}
+
+function shoppingToolCard(card, time) {
+  const {entry} = chatEntry({label: card.title || 'Siru', time, className: 'card-entry'});
+  const box = el_('div', `chat-card ui-card${card.accent ? ` accent-${String(card.accent).replace(/\W/g, '')}` : ''}`);
+  if (card.title) box.append(el_('div', 'card-eyebrow', card.title));
+  for (const block of card.blocks || []) {
+    if (block.type === 'header') {
+      box.append(el_('strong', '', block.text || ''));
+      if (block.sub) box.append(el_('span', 'muted small', block.sub));
+    } else if (block.type === 'paragraph') {
+      box.append(el_('p', '', block.text || ''));
+    } else if (block.type === 'note') {
+      box.append(el_('p', `card-note${block.tone === 'danger' || block.tone === 'warning' ? ' warn' : ''}`, block.text || ''));
+    } else if (block.type === 'list') {
+      for (const item of block.items || []) {
+        const row = el_('div', 'doctor-row');
+        const who = el_('div');
+        who.append(el_('strong', '', item.title || ''));
+        if (item.subtitle) who.append(el_('span', 'muted small', item.subtitle));
+        if (item.meta) who.append(el_('span', 'muted small', item.meta));
+        row.append(who);
+        const button = uiCardButton(item.action);
+        if (button) row.append(button);
+        box.append(row);
+      }
+    } else if (block.type === 'actions') {
+      const buttons = (block.buttons || []).map(uiCardButton).filter(Boolean);
+      if (buttons.length) {
+        const bar = el_('div', 'slot-buttons');
+        bar.append(...buttons);
+        box.append(bar);
+      }
+    }
+  }
+  entry.append(box);
+  return entry;
+}
+
+// present_options: a question and a button per option; a tap sends the option's value.
+function shoppingChoicesCard(card, time) {
+  const options = (card.options || []).filter(o => o && o.label && o.value);
+  if (!options.length) return null;
+  const {entry} = chatEntry({label: 'Choose', time, className: 'card-entry'});
+  const box = el_('div', 'chat-card choices-card');
+  if (card.question) box.append(el_('p', '', card.question));
+  const bar = el_('div', 'slot-buttons');
+  for (const option of options) {
+    const button = el_('button', 'card-action ghost', option.label);
+    button.type = 'button';
+    button.onclick = () => shoppingSubmit(String(option.value));
+    bar.append(button);
+  }
+  box.append(bar);
   entry.append(box);
   return entry;
 }
@@ -719,7 +1196,9 @@ function shoppingUiCard(card, time = null) {
     pharmacy_offer: shoppingOfferCard, cart_added: shoppingAddedCard,
     confirm_action: shoppingConfirmCard, checkin: shoppingCheckinCard,
     doctor_slots: shoppingDoctorSlotsCard, rx_draft: shoppingRxDraftCard,
-    memory_forget: shoppingMemoryForgetCard,
+    memory_forget: shoppingMemoryForgetCard, ui: shoppingToolCard, choices: shoppingChoicesCard,
+    order_confirmed: shoppingOrderConfirmedCard, cart_summary: shoppingCartSummaryCard,
+    order_list: shoppingOrderListCard, open_view: shoppingOpenViewCard,
   }[card?.kind];
   if (!render) return null;
   const entry = render(card, time);
@@ -962,10 +1441,32 @@ function inspectorRow(label, {name = '', badges = [], detail = '', time = '', to
   return row;
 }
 
+// A step's status as the server reported it: running, success, failed,
+// timeout (or unavailable / skipped for memory). No status: nothing claimed.
+const STATUS_LABELS = {done: 'success', error: 'failed', failed: 'failed', timeout: 'timeout', running: 'running',
+  fallback: 'fell back', unavailable: 'unavailable', skipped: 'skipped'};
+
 function statusBadge(status) {
-  if (!status || status === 'done') return null;
-  return el_('span', `trace-status status-${status === 'error' ? 'error' : status}`, status);
+  if (!status) return null;
+  const label = STATUS_LABELS[status] || status;
+  const tone = label === 'failed' ? 'error' : label === 'success' ? 'ok' : label.replace(/\s+/g, '-');
+  return el_('span', `trace-status status-${tone}`, label);
 }
+
+// Tokens as reported: a provider that sent none is "not reported", never 0.
+function tokensText({tokens_in, tokens_out, tokens_cached}) {
+  if (tokens_in == null && tokens_out == null) return 'tokens not reported';
+  const parts = [`${tokens_in ?? 0} in / ${tokens_out ?? 0} out`];
+  if (tokens_cached != null) parts.push(`${tokens_cached} cached`);
+  return parts.join(' · ');
+}
+
+function modelProvider(name) {
+  const provider = String(name || '').split(':')[0];
+  return provider === 'openai' ? 'OpenAI' : String(name || '').startsWith('gemini') ? 'Gemini' : '';
+}
+
+const MEMORY_STORES = {redis: 'Redis', app_db: 'App database'};
 
 // A trace step (tracing.py) as its row. `calls` are the streamed tool calls
 // (plane, tables) of the turn, matched to its tool steps in order.
@@ -987,14 +1488,20 @@ function activityStep(step, calls = [], checkpoints = []) {
       time: activityMs(step.duration_ms)});
   }
   if (step.kind === 'llm') {
-    const tokens = step.tokens_in != null ? `${step.tokens_in} in / ${step.tokens_out ?? 0} out` : '';
-    return inspectorRow('MODEL', {name: step.name, time: activityMs(step.duration_ms),
-      detail: [step.tool_calls?.length ? `chose ${step.tool_calls.join(', ')}` : 'wrote the answer', tokens].filter(Boolean).join(' · ')});
+    const ok = !step.status || step.status === 'done';
+    const what = !ok ? (step.error ? `error ${step.error}` : '')
+      : step.tool_calls?.length ? `chose ${step.tool_calls.join(', ')}` : step.via === 'buyer' ? 'wrote the answer' : 'answered';
+    return inspectorRow('MODEL', {name: step.name, tone: ok ? '' : 'error',
+      badges: [modelProvider(step.name) && el_('span', 'trace-tag', modelProvider(step.name)), statusBadge(step.status)],
+      time: activityMs(step.duration_ms), detail: [what, ok ? tokensText(step) : ''].filter(Boolean).join(' · ')});
   }
   if (step.kind === 'memory') {
-    const counts = [step.count != null ? `${step.count} fact${step.count === 1 ? '' : 's'}` : '',
+    const unit = step.store === 'redis' ? 'message' : 'fact';
+    const counts = [step.count != null ? `${step.count} ${unit}${step.count === 1 ? '' : 's'}` : '',
       step.duplicates ? `${step.duplicates} already known` : '', step.reason].filter(Boolean).join(' · ');
-    return inspectorRow('MEMORY', {name: step.name, badges: [statusBadge(step.status)], detail: counts});
+    return inspectorRow('MEMORY', {name: step.name, tone: step.status === 'unavailable' ? 'warn' : '',
+      badges: [step.store && el_('span', 'trace-tag', MEMORY_STORES[step.store] || step.store), statusBadge(step.status)],
+      detail: counts, extra: tableChips(step.tables_read || [], step.tables_written || [])});
   }
   if (step.kind === 'guard') {
     return inspectorRow('GUARD', {name: step.name, tone: step.verdict === 'pass' ? '' : 'guard',
@@ -1023,7 +1530,7 @@ function activityStep(step, calls = [], checkpoints = []) {
   const chips = tableChips(call?.tables_read || step.tables_read, call?.tables_written || step.tables_written);
   if (chips) extra.append(chips);
   if (io) extra.append(io);
-  return inspectorRow('TOOL', {name: step.name, tone: step.status === 'error' ? 'error' : '',
+  return inspectorRow('TOOL', {name: step.name, tone: ['error', 'timeout'].includes(step.status) ? 'error' : '',
     badges: [planeBadge(call?.plane), statusBadge(step.status)], time: activityMs(step.duration_ms ?? call?.ms),
     detail: step.by === 'model' ? 'called by the model' : 'called directly', extra: extra.children.length ? extra : null});
 }
@@ -1036,7 +1543,10 @@ function traceFooter(trace) {
     : Number(usage.cost_inr) === 0 ? '₹0' : `₹${Number(usage.cost_inr).toFixed(4)}`;
   const foot = el_('div', 'trace-footer');
   const parts = [models.length ? models.join(', ') : 'no model', `${calls} model call${calls === 1 ? '' : 's'}`];
-  if (calls) parts.push(`${usage.tokens_in ?? 0} in / ${usage.tokens_out ?? 0} out`);
+  if (calls) {
+    parts.push(tokensText(usage));
+    if (usage.tokens_unreported && usage.tokens_in != null) parts.push(`${usage.tokens_unreported} call${usage.tokens_unreported === 1 ? '' : 's'} without token counts`);
+  }
   parts.push(activityMs(trace.total_ms), cost);
   for (const part of parts.filter(Boolean)) foot.append(el_('span', '', part));
   if (trace.trace_id) foot.append(el_('code', 'trace-id', trace.trace_id));
@@ -1046,7 +1556,8 @@ function traceFooter(trace) {
 // One turn's entry: what was asked, who answered, every step, what came out.
 function activityEntry({turn_id, user, timestamp, trace, source = 'text', reply = '', card_kinds = []}) {
   const tools = (trace.steps || []).filter(step => step.kind === 'tool');
-  const failed = tools.some(step => step.status === 'error');
+  const failed = tools.some(step => ['error', 'timeout'].includes(step.status));
+  const tables = inspectorTables([{trace}]);
   const panel = el_('details', 'agent-activity');
   panel.dataset.turnId = turn_id;
   const summary = el_('summary');
@@ -1057,11 +1568,15 @@ function activityEntry({turn_id, user, timestamp, trace, source = 'text', reply 
   const top = el_('span', 'activity-top');
   top.append(el_('span', `activity-source${voice ? ' voice' : ''}`, voice ? 'Voice' : 'Chat'), node,
     el_('span', 'activity-time', activityMs(trace.total_ms)));
-  const answeredBy = el_('code', `agent-chip${String(trace.agent || '').startsWith('direct_tool:') ? ' direct' : ''}`,
-    trace.agent || 'supervisor');
+  const answeredBy = trace.failed
+    ? el_('span', 'trace-status status-error', `failed · ${String(trace.error).replace(/_/g, ' ')}`)
+    : el_('code', `agent-chip${String(trace.agent || '').startsWith('direct_tool:') ? ' direct' : ''}`, trace.agent || 'supervisor');
   const meta = el_('span', 'activity-meta');
+  const reads = tables.filter(t => t.reads && !t.writes).length;
+  const writes = tables.filter(t => t.writes).length;
   meta.append(answeredBy, el_('span', `activity-count${failed ? ' has-error' : ''}`,
-    tools.length ? `${tools.length} tool call${tools.length === 1 ? '' : 's'}` : 'no tools'));
+    tools.length ? `${tools.length} tool call${tools.length === 1 ? '' : 's'}` : 'no tools'),
+    el_('span', 'activity-count', tables.length ? `R ${reads} · W ${writes}` : 'no DB access'));
   summary.append(top, el_('span', 'activity-question', user ? `“${user}”` : 'Siru'), meta);
   const calls = (trace.io?.calls || []).map(call => ({...call}));
   const checkpoints = [...(trace.io?.checkpoints || [])];
@@ -1120,10 +1635,20 @@ function inspectorTables(items) {
   };
   for (const item of items) {
     for (const call of item.trace?.io?.calls || []) {
-      for (const table of call.tables_written || []) touch(table, true, call.name, call.plane);
-      for (const table of call.tables_read || []) if (!(call.tables_written || []).includes(table)) touch(table, false, call.name, call.plane);
+      // Where each table is (the SIRU platform's database or this app's own), as the server said.
+      const plane = table => call.table_planes?.[table] || call.plane;
+      for (const table of call.tables_written || []) touch(table, true, call.name, plane(table));
+      for (const table of call.tables_read || []) if (!(call.tables_written || []).includes(table)) touch(table, false, call.name, plane(table));
     }
     for (const cp of item.trace?.io?.checkpoints || []) for (const table of cp.tables_written || []) touch(table, true, 'checkpointer', 'ai');
+    // Memory: long-term facts (app database) and this conversation's recent turns (Redis).
+    for (const step of (item.trace?.steps || []).filter(step => step.kind === 'memory')) {
+      for (const table of step.tables_written || []) touch(table, true, `memory ${step.name}`, 'ai');
+      for (const table of step.tables_read || []) touch(table, false, `memory ${step.name}`, 'ai');
+      if (step.store === 'redis' && step.status === 'done' && step.name !== 'short-term empty') {
+        touch('redis · short-term conversation', step.name === 'short-term saved', 'short-term memory', 'ai');
+      }
+    }
   }
   return [...tables.values()].sort((a, b) => (b.writes > 0) - (a.writes > 0) || a.name.localeCompare(b.name));
 }
@@ -1156,13 +1681,20 @@ function inspectorSummary() {
   const tools = steps.filter(step => step.kind === 'tool');
   const direct = tools.filter(step => step.by !== 'model').length;
   const model = items.reduce((n, item) => n + (item.trace.usage?.llm_calls ?? item.trace.llm_calls ?? 0), 0);
-  const tokens = items.reduce((n, item) => n + (item.trace.usage?.tokens_in || 0) + (item.trace.usage?.tokens_out || 0), 0);
+  // Only what providers reported: calls without token counts are said, not zeroed.
+  const reported = items.filter(item => (item.trace.usage?.llm_calls || 0) > 0 && item.trace.usage?.tokens_in != null);
+  const tokens = reported.reduce((n, item) => n + (item.trace.usage.tokens_in || 0) + (item.trace.usage.tokens_out || 0), 0);
+  const cached = reported.reduce((n, item) => n + (item.trace.usage.tokens_cached || 0), 0);
+  const unreported = items.reduce((n, item) => n + (item.trace.usage?.tokens_unreported || 0), 0);
   shopEl.statTools.textContent = tools.length;
   shopEl.statToolsSplit.textContent = tools.length ? `${direct} direct · ${tools.length - direct} by model` : '';
   shopEl.statTables.textContent = tables.length;
   shopEl.statWrites.textContent = tables.filter(t => t.writes).length;
   shopEl.statModel.textContent = model;
-  shopEl.statTokens.textContent = tokens ? `${tokens.toLocaleString()} tokens` : '';
+  shopEl.statTokens.textContent = !model ? ''
+    : reported.length ? [`${tokens.toLocaleString()} tokens`, cached ? `${cached.toLocaleString()} cached` : '',
+      unreported ? `${unreported} call${unreported === 1 ? '' : 's'} not reported` : ''].filter(Boolean).join(' · ')
+      : 'tokens not reported';
   const voice = items.filter(item => item.source === 'voice').length;
   shopEl.inspectorSub.textContent = items.length
     ? [`${items.length} request${items.length === 1 ? '' : 's'} in this conversation`, voice ? `${voice} by voice` : ''].filter(Boolean).join(' · ')
@@ -1185,6 +1717,54 @@ function activityCounts() {
 function activityRender(item) {
   shopEl.activityList.prepend(item.kind === 'noise' ? noiseEntry(item) : activityEntry(item));
   activityCounts();
+}
+
+// The turn being answered, drawn step by step as the server streams it (SSE
+// `step`, tracing.py) - a step's update (running -> done) replaces its row by
+// id. Replaced by the turn's full entry when the answer arrives.
+function activityLiveStart(turn) {
+  const panel = el_('details', 'agent-activity activity-live');
+  panel.open = true;
+  panel.dataset.turnId = turn.id;
+  const summary = el_('summary');
+  const top = el_('span', 'activity-top');
+  top.append(el_('span', 'activity-source', 'Chat'), statusBadge('running'));
+  summary.append(top, el_('span', 'activity-question', turn.record.user ? `“${turn.record.user}”` : 'Siru'));
+  const list = el_('ol', 'trace-rows');
+  panel.append(summary, list);
+  shopEl.activityList.prepend(panel);
+  shopEl.activityEmpty.hidden = true;
+  return {panel, list, rows: new Map()};
+}
+
+function activityLiveStep(live, step) {
+  if (!live?.panel.isConnected || !step) return;
+  const row = activityStep(step, [], []);
+  const earlier = step.id != null ? live.rows.get(step.id) : null;
+  if (earlier) earlier.replaceWith(row);
+  else live.list.append(row);
+  if (step.id != null) live.rows.set(step.id, row);
+}
+
+function activityLiveEnd(live) {
+  live?.panel.remove();
+}
+
+// A failed turn's trace from its streamed steps: the model calls counted as
+// the steps say, tokens only where a provider reported them.
+function failedTrace(err, turn) {
+  const steps = err.steps;
+  const llm = steps.filter(step => step.kind === 'llm');
+  const reported = llm.filter(step => step.tokens_in != null || step.tokens_out != null);
+  return {
+    steps, agent: '', route: '', failed: true, error: err.code || 'failed', trace_id: err.traceId || '',
+    total_ms: steps.length ? Math.max(...steps.map(step => Number(step.at_ms) || 0)) : null,
+    usage: {llm_calls: llm.length, tokens_unreported: llm.length - reported.length,
+      tokens_in: reported.length ? reported.reduce((n, step) => n + (step.tokens_in || 0), 0) : (llm.length ? null : 0),
+      tokens_out: reported.length ? reported.reduce((n, step) => n + (step.tokens_out || 0), 0) : (llm.length ? null : 0),
+      tokens_cached: null, cost_inr: null,
+      by_model: Object.fromEntries(llm.map(step => [step.name, {calls: llm.filter(s => s.name === step.name).length}]))},
+  };
 }
 
 // A turn's activity: into the panel (newest first) and its own history.
@@ -1310,7 +1890,8 @@ function shoppingVoiceEvent(message) {
   } else if (message.type === 'voice.error') {
     shoppingVoiceError(message);
   } else if (message.type === 'reply' && message.text) {
-    shoppingMessage(message.text, 'assistant', 'voice', message.reply_id);
+    const greeting = String(message.reply_id || '').startsWith('greeting-');
+    shoppingMessage(message.text, 'assistant', 'voice', message.reply_id, null, false, greeting ? 'greeting' : null);
   }
 }
 
@@ -1325,12 +1906,18 @@ async function shoppingSubmit(text) {
   shop.busy = true;
   shoppingControls();
   const turn = shoppingTurn(turnId, {userText: text, source: 'text'});
+  const live = activityLiveStart(turn);
   try {
     await shoppingEnsureConnected();
     if (generation !== shop.generation) return;
     await shoppingSelectionReady();
     if (generation !== shop.generation) return;
-    const result = await pharmacyApi.command(text, turnId);
+    // Each streamed step: the inspector's live entry and the conversation's activity alike.
+    const result = await pharmacyApi.command(text, turnId, step => {
+      activityLiveStep(live, step);
+      turnActivityStep(turn, step);
+    });
+    activityLiveEnd(live);
     if (generation !== shop.generation) {
       // The user changed meanwhile: keep the reply in the owner's history only.
       Object.assign(turn.record, {status: 'answered', reply: result.message, agent: result.trace?.agent || ''});
@@ -1340,8 +1927,12 @@ async function shoppingSubmit(text) {
     await shoppingTurnFinish(turnId, {status: 'answered', reply: result.message, agent: result.trace?.agent,
       trace: result.trace, cards: result.cards});
   } catch (err) {
+    activityLiveEnd(live);
     if (generation !== shop.generation) return;
-    shoppingTurnFinish(turnId, {status: 'failed', reply: pharmacyError(err)});
+    // A failed turn keeps what it did (the steps streamed before the error) as
+    // a failed inspector entry - a timed-out or refused model call included.
+    const trace = Array.isArray(err.steps) && err.steps.length ? failedTrace(err, turn) : null;
+    shoppingTurnFinish(turnId, {status: 'failed', reply: pharmacyError(err), trace});
     // The agent endpoint has no idempotency contract: never resubmit a
     // possibly committed order after a lost response - check the cart instead.
     const check = el_('button', 'link-btn', 'Check cart');
@@ -1385,6 +1976,7 @@ async function shoppingRefresh() {
 function turnRestore(record) {
   const turn = shoppingTurn(record.id, {}, record);
   const time = record.replied_at || record.timestamp;
+  if (record.activity?.length) turn.el.append(turnActivityRestore(record));
   if (record.reply) {
     const trace = record.has_trace ? {steps: userRead(activityKey(), []).find(item => item.turn_id === record.id)?.trace?.steps || []} : null;
     turnReply(turn, record.reply, {agent: record.agent, status: record.status, trace, time});
@@ -1398,7 +1990,7 @@ function turnRestore(record) {
 // A message outside any turn (the greeting, a notice) in this session.
 function messageRestore(message) {
   if (typeof message.text !== 'string') return;
-  shoppingMessage(message.text, message.role, message.source, message.id, message.timestamp, true);
+  shoppingMessage(message.text, message.role, message.source, message.id, message.timestamp, true, message.kind || null);
 }
 
 async function shoppingResetUser() {
@@ -1414,11 +2006,14 @@ async function shoppingResetUser() {
   shop.turns.clear();
   shop.lastLoadError = null;
   shop.billedKey = null;
+  shop.bill = null;
   shop.billQueue = Promise.resolve();
   window.speechSynthesis?.cancel();
   shop.selectionError = null;
   shop.selectionPromise = Promise.resolve();
   shopEl.orderDialog.close();
+  shopEl.cartDialog.close();
+  cartBillRender(null);
   shopEl.chatMessages.replaceChildren();
   shoppingLivePreview('');
   shopEl.activityPanel.classList.remove('open');
@@ -1430,17 +2025,22 @@ async function shoppingResetUser() {
     else messageRestore(message);
   }
   memoryRefresh();
-  voiceIdRefresh();
   shopEl.chatMessages.scrollTop = shopEl.chatMessages.scrollHeight;
   shopEl.selectedMedicine.textContent = "Select a product to use “this medicine”.";
   shopEl.cartItems.textContent = getUserId() ? 'Loading cart…' : 'Sign in to see your cart.';
   shopEl.cartStatus.textContent = getUserId() ? 'Loading cart…' : 'Not signed in';
   shopEl.cartTotal.textContent = money(0);
   shopEl.cartCount.textContent = "0";
+  shopEl.cartBtn.setAttribute('aria-label', 'Cart, 0 items');
+  shopEl.placeOrderBtn.textContent = 'Place demo order';
   shoppingRenderProducts();
   await stopVoiceSession();
   if (generation !== shop.generation) return;
   if (!getUserId()) return;
+  // The session-open moment (the welcome, due check-ins) needs only the
+  // sign-in, not the pharmacy: it ran only once the catalog had loaded, so the
+  // first sign-in after opening the page (catalog not loaded yet) skipped it.
+  shoppingOpenSession();
   // Switching profile must not leave the page disconnected: load the pharmacy
   // if it isn't yet (that load then refreshes this user's cart itself).
   if (!pharmacyApi.mode) { initShopping(); return; }
@@ -1450,7 +2050,6 @@ async function shoppingResetUser() {
   await shop.selectionPromise;
   if (generation !== shop.generation) return;
   await shoppingRefresh();
-  if (generation === shop.generation) await shoppingOpenSession();
 }
 
 // ---------- things SIRU brings up itself, and prescription photos ----------
@@ -1469,6 +2068,12 @@ async function shoppingOpenSession() {
     return;  // an older API without the route - nothing to bring up
   }
   if (owner !== getUserId()) return;
+  // "Hi Kumar, welcome back!" - the server sends it once per sign-in, with the
+  // name from the signed-in account (not from this page), so a reload or a
+  // re-render never repeats it; a reload shows the saved one instead.
+  if (typeof data.welcome === 'string' && data.welcome) {
+    shoppingMessage(data.welcome, 'assistant', 'text', `welcome-${crypto.randomUUID()}`, null, false, 'greeting');
+  }
   for (const card of data.cards || []) {
     const turnId = crypto.randomUUID();
     shoppingTurn(turnId, {source: 'text'});
@@ -1515,7 +2120,18 @@ if (rxEl.button) {
 }
 
 shopEl.clearCartBtn.onclick = () => shoppingSubmit("Clear cart");
-shopEl.placeOrderBtn.onclick = () => shoppingSubmit("Place order");
+// Ordering is a turn like any other: the dialog closes, the chat shows it,
+// and a placed order opens its receipt (orderDialogShow).
+shopEl.placeOrderBtn.onclick = () => {
+  shopEl.cartDialog.close();
+  shoppingSubmit("Place order");
+};
+shopEl.cartBtn.onclick = () => cartDialogShow();
+// A confirmation shown in the dialog is only for that moment: the chat keeps its copy.
+shopEl.cartDialog.addEventListener('close', () => {
+  shopEl.cartConfirm.replaceChildren();
+  shopEl.cartConfirm.hidden = true;
+});
 
 // The catalog load sets the pharmacy connection (pharmacyApi.mode). It used to
 // run once at page start with no retry, so an API that was still starting left
@@ -1558,7 +2174,7 @@ locationSubscribe(state => {
   const first = shoppingLocationKey === null;
   shoppingLocationKey = key;
   if (first || !pharmacyApi.mode || !getUserId()) return;
-  console.info('siru: location changed - reloading nearest pharmacies', place ? {lat: place.lat, lng: place.lng} : null);
+  console.info('siru: location changed - reloading nearest pharmacies', {source: place?.source || null});
   shoppingLoadCatalog();
 });
 
