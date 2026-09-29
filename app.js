@@ -268,6 +268,8 @@ function updateMuteUI() {
 
 // How long a voice call waits for the voice worker to join before saying it isn't running.
 const VOICE_AGENT_JOIN_MS = 15000;
+// One automatic retry in a new room when no assistant joined (startVoiceSession).
+let voiceJoinRetried = false;
 
 async function startVoiceSession() {
   const surface = voiceSurface();
@@ -388,9 +390,13 @@ async function startVoiceSession() {
     // The voice worker joins the room on its own; if none does, say so rather
     // than listening to nobody.
     let agentJoined = false;
+    let micLive = false;
     room.on(LivekitClient.RoomEvent.ParticipantConnected, (participant) => {
       agentJoined = true;
       voiceLog('assistant joined', {identity: participant.identity});
+      voiceJoinRetried = false;
+      // Until the voice worker has joined, nothing the user says is heard.
+      if (micLive && room === voiceRoom && !micMuted) setVoiceStatus("Listening - speak anytime");
     });
     // The voice worker left (its session ended - e.g. speech recognition or
     // synthesis failed for good): end the call rather than stay connected to
@@ -454,8 +460,22 @@ async function startVoiceSession() {
     voiceLog('microphone on');
     if (room !== voiceRoom || generation !== generationNow()) { await room.disconnect(); return; }
     agentJoined = agentJoined || room.remoteParticipants.size > 0;
-    setTimeout(() => {
+    setTimeout(async () => {
       if (room !== voiceRoom || agentJoined || room.remoteParticipants.size > 0) return;
+      // LiveKit dispatches a room's assistant once and never again: a call
+      // started while the previous one was still ending could be left without
+      // one ("no servers available"). A new room is a new dispatch - once.
+      if (!voiceJoinRetried) {
+        voiceJoinRetried = true;
+        voiceLog('assistant not joined - retrying once in a new room');
+        await stopVoiceSession();
+        if (generation === generationNow() && getUserId() === userId) {
+          setVoiceStatus("Connecting to Siru...");
+          await startVoiceSession();
+        }
+        return;
+      }
+      voiceJoinRetried = false;
       voiceLog('failed', {stage: 'assistant', reason: 'no voice worker joined'});
       const message = "The voice assistant didn't join the call - the voice worker isn't running. Typed chat still works.";
       setVoiceStatus(message);
@@ -471,7 +491,11 @@ async function startVoiceSession() {
       el.muteBtn.hidden = false;
       updateMuteUI();
     }
-    setVoiceStatus("Listening - speak anytime");
+    micLive = true;
+    agentJoined = agentJoined || room.remoteParticipants.size > 0;
+    // The assistant joins the room on its own (its process may still be
+    // starting): "listening" only once it is there - before, speech is lost.
+    setVoiceStatus(agentJoined ? "Listening - speak anytime" : "Connecting to Siru...");
   } catch (err) {
     // Clear voiceRoom (so the TrackSubscribed/Disconnected guards above
     // take effect) BEFORE awaiting disconnect(), not after - teardown can

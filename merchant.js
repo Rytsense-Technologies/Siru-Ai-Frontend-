@@ -155,12 +155,24 @@ function merchantFetch(section, query = '') {
 }
 
 const NOT_CONNECTED = 'provider_not_configured';
+// Page-wide states: not an error of one panel - the page says it once and each
+// panel says it in a word. no_store / several_stores are what the client
+// database says about this merchant (the API's 404 / 409), not an outage.
+const PAGE_STATES = {
+  [NOT_CONNECTED]: 'Not available - provider-service is not connected.',
+  no_store: 'No store registered for this account.',
+  several_stores: 'Several stores - choose one in the SIRU app.',
+};
 
-function merchantNotConnected(err) { return err?.detail?.code === NOT_CONNECTED; }
+function merchantNotConnected(err) { return Boolean(PAGE_STATES[err?.detail?.code]); }
 
 // A panel's own line: short when the whole page already says why (merchantNotice).
 function merchantPanelError(err) {
-  return merchantNotConnected(err) ? 'Not available - provider-service is not connected.' : merchantErrorText(err);
+  return PAGE_STATES[err?.detail?.code] || merchantErrorText(err);
+}
+
+function merchantPanelTone(err) {
+  return err?.detail?.code === 'no_store' || err?.detail?.code === 'several_stores' ? 'muted' : 'error';
 }
 
 function merchantErrorText(err) {
@@ -225,7 +237,8 @@ async function mFill(panel, section, render, query = '') {
   const generation = merchant.generation;
   const result = await merchantFetch(section, query);
   if (generation !== merchant.generation) return result;
-  body.replaceChildren(result.error ? mState(merchantPanelError(result.error), 'error') : render(result.data));
+  body.replaceChildren(result.error ? mState(merchantPanelError(result.error), merchantPanelTone(result.error))
+    : render(result.data));
   return result;
 }
 

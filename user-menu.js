@@ -129,14 +129,16 @@ loginEl.loginForm.addEventListener('submit', async event => {
   }
 });
 
-// Local development only: sign in as one of the merchants the client
-// database really has (GET /v1/auth/demo-merchants - the API reads them from
-// the client database, read-only; 404 anywhere but development, and this
-// block then stays hidden). The store shown is what the database returned;
-// the dashboard is scoped by the signed-in merchant, never by this choice.
+// Local development only, and only on the merchant entry page (/?merchant) -
+// the customer sign-in never lists merchants: sign in as one of the merchants
+// the client database really has (GET /v1/auth/demo-merchants - the API reads
+// them from the client database, read-only; 404 anywhere but development, and
+// this block then stays hidden). The store shown is what the database
+// returned; the dashboard is scoped by the signed-in merchant, never by this choice.
+const MERCHANT_ENTRY = new URLSearchParams(location.search).has('merchant');
 async function loadDemoMerchants() {
   const box = loginEl.demoMerchants;
-  if (!box) return;
+  if (!box || !MERCHANT_ENTRY) return;
   let res;
   try {
     res = await fetch(`${API_BASE}/v1/auth/demo-merchants`);
@@ -206,7 +208,21 @@ for (const language of ASSISTANT_LANGUAGES) {
   option.textContent = language.label;
   loginEl.languageSelect.append(option);
 }
+// The profile menu is a <details>: it stayed open over the page until its own
+// summary was clicked again. It closes on a click elsewhere, on Escape and
+// once the language is chosen.
+document.addEventListener('click', event => {
+  if (loginEl.userMenu.open && !loginEl.userMenu.contains(event.target)) loginEl.userMenu.open = false;
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && loginEl.userMenu.open) {
+    loginEl.userMenu.open = false;
+    loginEl.userMenu.querySelector('summary')?.focus();
+  }
+});
+
 loginEl.languageSelect.addEventListener('change', async () => {
+  loginEl.userMenu.open = false;
   if (!getUserId()) return;
   userWrite(`siru_language_${getUserId()}`, loginEl.languageSelect.value);
   renderCurrentUser();

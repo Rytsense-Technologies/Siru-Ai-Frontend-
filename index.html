@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Siru Pharmacy — AI Assistant</title>
-<link rel="stylesheet" href="style.css?v=52">
-<link rel="stylesheet" href="dashboard.css?v=52">
+<link rel="stylesheet" href="style.css?v=53">
+<link rel="stylesheet" href="dashboard.css?v=53">
 <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
 </head>
 <body>
@@ -80,8 +80,9 @@
       <p id="loginError" class="login-error" role="alert" hidden></p>
       <button id="loginBtn" type="submit">Sign in</button>
     </form>
-    <!-- Local development only (the API answers 404 elsewhere, and this stays
-         hidden): the merchants the client database really has - user-menu.js. -->
+    <!-- Local development only, and only at /?merchant (never on the customer
+         sign-in): the merchants the client database really has - user-menu.js.
+         The API answers 404 outside development, and this then stays hidden. -->
     <details id="demoMerchants" class="login-server demo-merchants" hidden>
       <summary>Merchant sign-in (local development)</summary>
       <p id="demoMerchantsNote" class="muted"></p>
@@ -330,17 +331,17 @@
   <form method="dialog"><button>Continue shopping</button></form>
 </dialog>
 
-<script src="config.js?v=52"></script>
-<script src="icons.js?v=52"></script>
-<script src="users.js?v=52"></script>
-<script src="location.js?v=52"></script>
-<script src="app.js?v=52"></script>
-<script src="pharmacy-api.js?v=52"></script>
-<script src="shopping.js?v=52"></script>
-<script src="shop-flow.js?v=52"></script>
-<script src="memory.js?v=52"></script>
-<script src="location-ui.js?v=52"></script>
-<script src="merchant.js?v=52"></script>
-<script src="user-menu.js?v=52"></script>
+<script src="config.js?v=53"></script>
+<script src="icons.js?v=53"></script>
+<script src="users.js?v=53"></script>
+<script src="location.js?v=53"></script>
+<script src="app.js?v=53"></script>
+<script src="pharmacy-api.js?v=53"></script>
+<script src="shopping.js?v=53"></script>
+<script src="shop-flow.js?v=53"></script>
+<script src="memory.js?v=53"></script>
+<script src="location-ui.js?v=53"></script>
+<script src="merchant.js?v=53"></script>
+<script src="user-menu.js?v=53"></script>
 </body>
 </html>

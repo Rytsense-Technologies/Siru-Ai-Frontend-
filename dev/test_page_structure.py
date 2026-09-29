@@ -187,9 +187,38 @@ class PageStructureTest(unittest.TestCase):
         self.assertIn("/v1/auth/demo-merchants`", menu)
         self.assertIn("/v1/auth/demo-merchants/login", menu)
         self.assertIn("if (res.status === 404) return;", menu)
+        # Never on the customer sign-in: only the merchant entry page (/?merchant) lists merchants.
+        self.assertIn("const MERCHANT_ENTRY = new URLSearchParams(location.search).has('merchant');", menu)
+        self.assertIn("if (!box || !MERCHANT_ENTRY) return;", menu)
         store_name = re.compile(r"""['"`](?:[A-Z][a-z]+ )+(?:Pharmacy|Medicals|Medical|Chemists?)['"`]""")
         for script in FRONTEND.glob("*.js"):
             self.assertEqual(store_name.findall(script.read_text(encoding="utf-8")), [], script.name)
+
+    def test_the_profile_menu_closes_like_a_menu(self):
+        """The profile menu (with the assistant language) is a <details>: it
+        stayed open over the page. It closes on a click elsewhere, on Escape
+        and once a language is chosen - and never runs off a small screen."""
+        menu = (FRONTEND / "user-menu.js").read_text(encoding="utf-8")
+        self.assertIn("!loginEl.userMenu.contains(event.target)) loginEl.userMenu.open = false;", menu)
+        self.assertIn("event.key === 'Escape' && loginEl.userMenu.open", menu)
+        self.assertRegex(menu, r"languageSelect\.addEventListener\('change', async \(\) => \{\s+loginEl\.userMenu\.open = false;")
+        css = (FRONTEND / "style.css").read_text(encoding="utf-8")
+        self.assertIn("width: min(320px, calc(100vw - 24px)); max-height: calc(100vh - 80px); overflow-y: auto;", css)
+        page = _page()
+        for language in ("en-IN", "ta-IN", "hi-IN", "te-IN"):
+            self.assertIn(f"code:'{language}'", (FRONTEND / "users.js").read_text(encoding="utf-8"))
+        self.assertIn("languageSelect", page.ids)
+
+    def test_voice_listens_only_once_the_assistant_has_joined(self):
+        """Speech before the voice worker joins the room is heard by nobody:
+        the page says it is connecting until the assistant is in the call."""
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+        self.assertIn('setVoiceStatus(agentJoined ? "Listening - speak anytime" : "Connecting to Siru...");', app)
+        self.assertIn('if (micLive && room === voiceRoom && !micMuted) setVoiceStatus("Listening - speak anytime");', app)
+        self.assertIn("Microphone permission denied. Allow microphone access in the browser and try again.", app)
+        # No assistant in the room (LiveKit dispatches a room once): one automatic retry in a new room.
+        self.assertIn("if (!voiceJoinRetried) {", app)
+        self.assertIn("voiceLog('assistant not joined - retrying once in a new room');", app)
 
     def test_the_pharmacy_screens_call_the_production_api_not_the_sandbox(self):
         """/v1/sandbox is development-only on the backend (404 in production:
