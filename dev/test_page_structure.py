@@ -157,6 +157,22 @@ class PageStructureTest(unittest.TestCase):
         for kind in ("cart_summary:", "order_list:", "open_view:"):
             self.assertIn(kind, shopping)
 
+    def test_a_stalled_request_or_stream_ends_the_turn_instead_of_hanging(self):
+        """A hung request (a stalled connection) must not leave the chat busy
+        for good: requests time out, and a stream that goes quiet is cancelled
+        and the turn fails with a message (seen live: a 45 s turn)."""
+        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+        api = (FRONTEND / "pharmacy-api.js").read_text(encoding="utf-8")
+        self.assertIn("const API_TIMEOUT_MS", app)
+        self.assertIn("new AbortController()", app)
+        self.assertIn("signal: controller.signal", api)
+        self.assertIn("reader.cancel()", api)
+        self.assertIn("stalled();", api)
+        page = _page()
+        self.assertIn("askInput", page.ids)
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        self.assertRegex(html, r'id="askInput"[^>]*maxlength="2000"')
+
 
 if __name__ == "__main__":
     unittest.main()

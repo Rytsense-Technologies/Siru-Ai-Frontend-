@@ -7,11 +7,30 @@ const concierge = {
   // inspector's live view of the turn.
   async turn(body, onStep = null) {
     const token = authToken();
-    const res = await fetch(`${API_BASE}/v1/concierge/turn`, {
-      method:'POST', body:JSON.stringify(body), headers:{...apiHeaders(), 'x-siru-trace':'1'},
-    });
+    // No answer, and nothing streamed, for this long (the server's turn budget
+    // is 60 s): the turn fails with a message instead of staying busy.
+    const controller = new AbortController();
+    // Set once the answer streams: a stall then cancels the stream and fails
+    // the turn itself - not only the request, whose stream a proxy may leave open.
+    let onStall = () => controller.abort();
+    let stall = setTimeout(() => onStall(), API_TIMEOUT_MS);
+    const stalled = () => {
+      clearTimeout(stall);
+      stall = setTimeout(() => onStall(), API_TIMEOUT_MS);
+    };
+    let res;
+    try {
+      res = await fetch(`${API_BASE}/v1/concierge/turn`, {
+        method:'POST', body:JSON.stringify(body), headers:{...apiHeaders(), 'x-siru-trace':'1'}, signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(stall);
+      if (err?.name === 'AbortError') throw apiTimeoutError('/v1/concierge/turn');
+      throw err;
+    }
     if (res.status === 401 && token && token === authToken()) authExpired();
     if (!res.ok || !res.body) {
+      clearTimeout(stall);
       let detail = await res.text().catch(() => '');
       try { const data = JSON.parse(detail); detail = typeof data.detail === 'string' ? data.detail : (data.error || res.statusText); } catch {}
       const error = new Error(`${res.status} ${detail || res.statusText}`);
@@ -37,6 +56,15 @@ const concierge = {
       if (answered) return;
       answered = true;
       resolveTurn(answer);
+    };
+    onStall = () => {
+      controller.abort();
+      reader.cancel().catch(() => {});
+      if (answered) return;
+      answered = true;
+      rejectTurn(Object.assign(apiTimeoutError('/v1/concierge/turn'), {
+        message: 'The answer is taking too long. Check your cart before trying again.', steps: [...steps.values()],
+      }));
     };
     const handle = event => {
       if (event.type === 'step') {
@@ -82,6 +110,7 @@ const concierge = {
         while (true) {
           const {value, done: ended} = await reader.read();
           if (ended) break;
+          stalled();  // bytes arrived: the stall timer starts again
           buffer += decoder.decode(value, {stream:true});
           let cut;
           while ((cut = buffer.indexOf('\n\n')) >= 0) {
@@ -93,6 +122,7 @@ const concierge = {
             }
           }
         }
+        clearTimeout(stall);
         if (!answered) {
           if (answer.text) finish();
           else {
@@ -103,7 +133,13 @@ const concierge = {
           }
         }
       } catch (err) {
-        if (!answered) { answered = true; rejectTurn(err); }
+        clearTimeout(stall);
+        if (!answered) {
+          answered = true;
+          rejectTurn(err?.name === 'AbortError' ? Object.assign(apiTimeoutError('/v1/concierge/turn'), {
+            message: 'The answer is taking too long. Check your cart before trying again.', steps: [...steps.values()],
+          }) : err);
+        }
       }
     })();
     return done;

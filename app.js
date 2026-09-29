@@ -62,9 +62,33 @@ function apiHeaders() {
   return { "Content-Type": "application/json", ...(authToken() ? {Authorization: `Bearer ${authToken()}`} : {}) };
 }
 
+// Longer than the server's own turn budget (request_timeout_seconds, 60 s): a
+// request that hangs past it (a stalled connection) fails with a message
+// instead of leaving the chat busy for good.
+const API_TIMEOUT_MS = 90000;
+
+function apiTimeoutError(path) {
+  const error = new Error("The server took too long to answer. Please try again.");
+  error.userMessage = true;
+  error.status = 0;
+  error.path = path;
+  return error;
+}
+
 async function apiFetch(path, options = {}) {
   const token = authToken();
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers: { ...apiHeaders(), ...options.headers } });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs || API_TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...options, signal: controller.signal,
+      headers: { ...apiHeaders(), ...options.headers } });
+  } catch (err) {
+    if (err?.name === 'AbortError') throw apiTimeoutError(path);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   // Expired or revoked: back to the sign-in screen (once - later calls made
   // with the same old token land here too).
   if (res.status === 401 && token && token === authToken()) authExpired();
