@@ -122,7 +122,7 @@ async function memoryShortTermRefresh(userId) {
 // Not memory: the cart is the server's cart as it is now (the same normalised
 // cart the cart dialog shows - shopping.js shoppingRenderCart calls
 // memoryCartRender), the orders are what the Orders dialog reads - the SIRU
-// orders (GET /v1/sandbox/orders) and the demo orders confirmed in this app
+// orders (GET /v1/pharmacy/orders) and the demo orders confirmed in this app
 // (GET /v1/actions/demo). Nothing here is stored as a remembered fact.
 const STATE_PLACEHOLDER = 'images/medicine.svg';
 

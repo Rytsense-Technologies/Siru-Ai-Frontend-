@@ -173,6 +173,20 @@ class PageStructureTest(unittest.TestCase):
         html = (FRONTEND / "index.html").read_text(encoding="utf-8")
         self.assertRegex(html, r'id="askInput"[^>]*maxlength="2000"')
 
+    def test_the_pharmacy_screens_call_the_production_api_not_the_sandbox(self):
+        """/v1/sandbox is development-only on the backend (404 in production:
+        "Pharmacy offline"); the products, nearby stores, cart and orders
+        screens call /v1/pharmacy."""
+        calls = {}
+        for script in FRONTEND.glob("*.js"):
+            text = script.read_text(encoding="utf-8")
+            self.assertNotIn("/v1/sandbox", text, script.name)
+            calls[script.name] = text
+        joined = "\n".join(calls.values())
+        for route in ("/v1/pharmacy/products", "/v1/pharmacy/stores/nearby", "/v1/pharmacy/cart/",
+                      "/v1/pharmacy/orders/"):
+            self.assertIn(route, joined)
+
 
 if __name__ == "__main__":
     unittest.main()

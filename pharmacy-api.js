@@ -156,7 +156,7 @@ const pharmacyApi = {
     try {
       // Each medicine once, from the pharmacy an add would use (the nearest) -
       // measured from the location the user chose (location.js), if any.
-      const products = await apiFetch(`/v1/sandbox/products?nearest=true${locationCatalogQuery()}`);
+      const products = await apiFetch(`/v1/pharmacy/products?nearest=true${locationCatalogQuery()}`);
       this.mode = 'sandbox';
       const illustrations = {dolo:'dolo',crocin:'crocin',cetirizine:'cetirizine',betadine:'betadine',electral:'electral'};
       this.products = products.map(p => {
@@ -168,7 +168,7 @@ const pharmacyApi = {
       const featured = Object.keys(illustrations).map(name => this.products.find(p => p.name.toLowerCase().startsWith(name))).filter(Boolean);
       return [...featured, ...this.products.filter(p => !featured.includes(p))].slice(0,5);
     } catch (error) {
-      if (error.status === 404) error.message = 'The configured API does not expose pharmacy routes. Check the API address and restart the current backend. Development-only routes require ENVIRONMENT=dev.';
+      if (error.status === 404) error.message = 'The configured API has no pharmacy routes (/v1/pharmacy) - check the API address; an older backend needs updating.';
       throw error;
     }
   },
@@ -188,7 +188,7 @@ const pharmacyApi = {
   async state() {
     if (this.mode !== 'sandbox') throw new Error('Connect to the pharmacy first.');
     const sequence = ++this.readSequence;
-    const cart = await apiFetch(`/v1/sandbox/cart/${encodeURIComponent(getUserId())}`);
+    const cart = await apiFetch(`/v1/pharmacy/cart/${encodeURIComponent(getUserId())}`);
     return {cart:this.normalizeCart(cart, sequence), results:[]};
   },
   // The cart plus the server's bill (present_bill: subtotal, delivery, total,
@@ -199,13 +199,13 @@ const pharmacyApi = {
     const sequence = ++this.readSequence;
     const user = encodeURIComponent(getUserId());
     try {
-      const data = await apiFetch(`/v1/sandbox/cart/${user}/bill`);
+      const data = await apiFetch(`/v1/pharmacy/cart/${user}/bill`);
       // The user's own delivery location when they set one; else the server's.
       return {cart:this.normalizeCart(data.cart, sequence), storeId:data.cart.storeId, bill:data.bill,
         address:locationBillAddress() || data.delivery?.address || ''};
     } catch (error) {
       if (error.status !== 404) throw error;
-      const cart = await apiFetch(`/v1/sandbox/cart/${user}`);
+      const cart = await apiFetch(`/v1/pharmacy/cart/${user}`);
       return {cart:this.normalizeCart(cart, sequence), storeId:cart.storeId, bill:null, address:''};
     }
   },
@@ -271,7 +271,7 @@ const pharmacyApi = {
   },
   // The signed-in user's orders, newest first (the rows list_orders reads).
   async orders() {
-    return apiFetch(`/v1/sandbox/orders/${encodeURIComponent(getUserId())}`);
+    return apiFetch(`/v1/pharmacy/orders/${encodeURIComponent(getUserId())}`);
   },
   imageFor(name) {
     return this.products.find(p => p.name === name)?.image_url || 'images/medicine.svg';

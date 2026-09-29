@@ -2,9 +2,9 @@
 // model call: every step is a direct API call and deterministic code.
 //
 //   1. pharmacies  the browser's REAL location (location.js; never a default
-//                  city, never (0,0)) -> GET /v1/sandbox/stores/nearby -> the
+//                  city, never (0,0)) -> GET /v1/pharmacy/stores/nearby -> the
 //                  5 nearest open pharmacies, nearest first (ranked server-side)
-//   2. medicines   the selected pharmacy's own shelf (GET /v1/sandbox/products
+//   2. medicines   the selected pharmacy's own shelf (GET /v1/pharmacy/products
 //                  ?store_id=), searched locally; + / - go to the server cart
 //   3. checkout    address, pharmacy, items, the server's bill, payment method
 //                  (none pre-selected) -> POST /v1/actions/orders -> confirm
@@ -115,7 +115,7 @@ async function shopFlowPharmacies({fresh = false} = {}) {
   if (!stores) {
     shopFlowMessage('Finding pharmacies near you…');
     try {
-      const data = await apiFetch(`/v1/sandbox/stores/nearby?lat=${coords.lat}&lng=${coords.lng}&limit=${SHOP_FLOW_NEAREST}`);
+      const data = await apiFetch(`/v1/pharmacy/stores/nearby?lat=${coords.lat}&lng=${coords.lng}&limit=${SHOP_FLOW_NEAREST}`);
       stores = data.stores || [];
       shopFlow.storesCache.set(key, stores);
     } catch (error) {
@@ -169,7 +169,7 @@ async function shopFlowMedicines() {
   if (!products) {
     shopFlowMessage('Loading medicines…');
     try {
-      products = await apiFetch(`/v1/sandbox/products?store_id=${encodeURIComponent(pharmacy.id)}`);
+      products = await apiFetch(`/v1/pharmacy/products?store_id=${encodeURIComponent(pharmacy.id)}`);
       shopFlow.shelfCache.set(pharmacy.id, products);
     } catch (error) {
       if (seq !== shopFlow.seq) return;
@@ -272,7 +272,7 @@ async function shopFlowCartChange(run) {
 async function shopFlowAdd(product, {replace = false} = {}) {
   const user = encodeURIComponent(getUserId());
   try {
-    await shopFlowCartChange(() => apiFetch(`/v1/sandbox/cart/${user}/items${replace ? '?replace_cart=true' : ''}`, {
+    await shopFlowCartChange(() => apiFetch(`/v1/pharmacy/cart/${user}/items${replace ? '?replace_cart=true' : ''}`, {
       method: 'POST', body: JSON.stringify({item_id: product.id, qty: 1}),
     }));
   } catch (error) {
@@ -284,7 +284,7 @@ async function shopFlowAdd(product, {replace = false} = {}) {
 
 function shopFlowSetQty(product, qty) {
   const user = encodeURIComponent(getUserId());
-  return shopFlowCartChange(() => apiFetch(`/v1/sandbox/cart/${user}/items/${encodeURIComponent(product.id)}`, {
+  return shopFlowCartChange(() => apiFetch(`/v1/pharmacy/cart/${user}/items/${encodeURIComponent(product.id)}`, {
     method: 'PUT', body: JSON.stringify({qty: Math.max(0, qty)}),
   }));
 }

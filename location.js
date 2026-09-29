@@ -1,5 +1,5 @@
 // Where the signed-in user is - their device location, or an address they
-// typed - for "nearest pharmacy" on the shelf (GET /v1/sandbox/products
+// typed - for "nearest pharmacy" on the shelf (GET /v1/pharmacy/products
 // ?nearest=true&lat=&lng=). No DOM here: location-ui.js draws it.
 //
 // Permission is asked for only when the user taps "Use my current location",

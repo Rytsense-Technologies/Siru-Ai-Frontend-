@@ -1306,13 +1306,13 @@ function orderFooter(total, orderId, label, items) {
 }
 
 // Re-order: the order's items and quantities go into the cart again, from the
-// same pharmacy (POST /v1/sandbox/orders/{user}/{order}/reorder - the same
+// same pharmacy (POST /v1/pharmacy/orders/{user}/{order}/reorder - the same
 // add_to_cart path as every add: prescription and allergy checks included).
 // Nothing is placed: the user checks out as usual.
 async function shoppingReorder(orderId, label, button) {
   const userId = getUserId();
   if (!userId || button.disabled) return;
-  const path = `/v1/sandbox/orders/${encodeURIComponent(userId)}/${encodeURIComponent(orderId)}/reorder`;
+  const path = `/v1/pharmacy/orders/${encodeURIComponent(userId)}/${encodeURIComponent(orderId)}/reorder`;
   const text = button.textContent;
   button.disabled = true;
   button.textContent = 'Adding…';
