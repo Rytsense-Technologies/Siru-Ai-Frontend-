@@ -95,15 +95,18 @@ async function apiFetch(path, options = {}) {
   if (!res.ok) {
     let body = await res.text().catch(() => "");
     let detail = null;
+    let requestId = '';
     try {
       const data = JSON.parse(body);
       detail = data.detail ?? null;
       body = typeof detail === 'string' ? detail : (detail?.message || data.error || res.statusText);
+      requestId = typeof data.request_id === 'string' ? data.request_id : '';
     } catch {}
     const error = new Error(`${res.status} ${body || res.statusText}`);
     error.status = res.status;
     error.path = path;
     error.detail = detail;  // a structured detail, e.g. {conflict: "cart_store", message}
+    error.requestId = requestId || res.headers.get('X-Request-ID') || '';  // matches the server's log line
     throw error;
   }
   return res.json();
@@ -487,6 +490,12 @@ async function startVoiceSession() {
       : voiceStage === 'api' && err.status === 503
         // The token route says what is missing (not configured / LiveKit unreachable) - no secrets.
         ? `Voice is unavailable: ${String(err.message || '').replace(/^\d{3}\s*/, '')}`
+        : voiceStage === 'api' && !err.status && err.name === 'TypeError'
+          // fetch itself failed: no answer the page could read (offline, the
+          // server down or restarting, or a response the browser blocked).
+          ? "Voice is unavailable: couldn't reach the Siru server. Check your connection and try again."
+        : voiceStage === 'api' && err.status >= 500
+          ? `Voice is unavailable: the server had a problem starting the call${err.requestId ? ` (ref ${err.requestId})` : ''}. Please try again.`
         : voiceStage === 'api'
           ? `Voice is unavailable right now. ${pharmacyError(err)}`
           : voiceStage === 'livekit'
@@ -495,7 +504,8 @@ async function startVoiceSession() {
               ? "Couldn't start the microphone. Check it is connected and not used by another app."
               : 'Voice is temporarily unavailable. Please try again.';
     // The technical reason (signalling, ICE, media) for whoever debugs it - not the user.
-    console.warn('siru: voice failed', {stage: voiceStage, status: err.status || null, name: err.name, message: err.message});
+    console.warn('siru: voice failed', {stage: voiceStage, status: err.status || null, name: err.name, message: err.message,
+      request_id: err.requestId || null});
     setVoiceStatus(message);
     surface.notice(message, 'voice');
     showToast({ icon: "alert", type: "info", body: escapeHtml(message) });
