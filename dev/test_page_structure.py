@@ -173,6 +173,24 @@ class PageStructureTest(unittest.TestCase):
         html = (FRONTEND / "index.html").read_text(encoding="utf-8")
         self.assertRegex(html, r'id="askInput"[^>]*maxlength="2000"')
 
+    def test_the_local_merchant_sign_in_lists_the_databases_merchants(self):
+        """Local development only: the merchant sign-in's stores come from the
+        API (GET /v1/auth/demo-merchants - the client database's owners); none
+        is written into the page or the scripts."""
+        page = _page()
+        for element in ("demoMerchants", "demoMerchantsNote", "demoMerchantSelect", "demoMerchantBtn",
+                        "demoMerchantError"):
+            self.assertIn(element, page.ids)
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        self.assertRegex(html, r'<details id="demoMerchants"[^>]*\bhidden\b')  # shown only when the API has it
+        menu = (FRONTEND / "user-menu.js").read_text(encoding="utf-8")
+        self.assertIn("/v1/auth/demo-merchants`", menu)
+        self.assertIn("/v1/auth/demo-merchants/login", menu)
+        self.assertIn("if (res.status === 404) return;", menu)
+        store_name = re.compile(r"""['"`](?:[A-Z][a-z]+ )+(?:Pharmacy|Medicals|Medical|Chemists?)['"`]""")
+        for script in FRONTEND.glob("*.js"):
+            self.assertEqual(store_name.findall(script.read_text(encoding="utf-8")), [], script.name)
+
     def test_the_pharmacy_screens_call_the_production_api_not_the_sandbox(self):
         """/v1/sandbox is development-only on the backend (404 in production:
         "Pharmacy offline"); the products, nearby stores, cart and orders

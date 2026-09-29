@@ -3,6 +3,7 @@ const loginEl = Object.fromEntries([
   'loginView', 'appView', 'loginForm', 'loginEmail', 'loginPassword', 'loginError', 'loginBtn',
   'userMenu', 'currentUserAvatar', 'currentUserName', 'currentUserLanguage', 'currentUserEmail',
   'languageSelect', 'logoutBtn', 'merchantView', 'brandSub',
+  'demoMerchants', 'demoMerchantsNote', 'demoMerchantSelect', 'demoMerchantBtn', 'demoMerchantError',
 ].map(id => [id, document.getElementById(id)]));
 let authExpiryTimer = null;
 
@@ -128,6 +129,77 @@ loginEl.loginForm.addEventListener('submit', async event => {
   }
 });
 
+// Local development only: sign in as one of the merchants the client
+// database really has (GET /v1/auth/demo-merchants - the API reads them from
+// the client database, read-only; 404 anywhere but development, and this
+// block then stays hidden). The store shown is what the database returned;
+// the dashboard is scoped by the signed-in merchant, never by this choice.
+async function loadDemoMerchants() {
+  const box = loginEl.demoMerchants;
+  if (!box) return;
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/v1/auth/demo-merchants`);
+  } catch {
+    return;  // the API isn't reachable - the sign-in form says so when used
+  }
+  if (res.status === 404) return;  // not a development server
+  const data = await res.json().catch(() => ({}));
+  box.hidden = false;
+  const select = loginEl.demoMerchantSelect;
+  select.replaceChildren();
+  if (!res.ok) {
+    loginEl.demoMerchantsNote.textContent = data?.detail?.message || `Merchant data is unavailable (${res.status}).`;
+    select.disabled = loginEl.demoMerchantBtn.disabled = true;
+    return;
+  }
+  const merchants = Array.isArray(data.merchants) ? data.merchants : [];
+  const source = data.source === 'client_rds' ? 'the client database' : `the ${data.source || 'configured'} data`;
+  if (!merchants.length) {
+    loginEl.demoMerchantsNote.textContent = `No merchant data available: ${source} has no store with an owner.`;
+    select.disabled = loginEl.demoMerchantBtn.disabled = true;
+    return;
+  }
+  loginEl.demoMerchantsNote.textContent = `${merchants.length} merchant${merchants.length === 1 ? '' : 's'} from ${source} (read-only).`;
+  for (const merchant of merchants) {
+    const stores = merchant.stores || [];
+    const first = stores[0] || {};
+    const option = document.createElement('option');
+    option.value = merchant.merchantId;
+    option.textContent = stores.length > 1
+      ? `${first.name} + ${stores.length - 1} more store${stores.length > 2 ? 's' : ''}`
+      : `${first.name} · ${first.isOpen ? 'open' : 'closed'} · ${first.catalogItems} items · ${first.orders} orders`;
+    select.append(option);
+  }
+  select.disabled = loginEl.demoMerchantBtn.disabled = false;
+}
+
+loginEl.demoMerchantBtn?.addEventListener('click', async () => {
+  const merchantId = loginEl.demoMerchantSelect.value;
+  if (!merchantId) return;
+  loginEl.demoMerchantError.hidden = true;
+  loginEl.demoMerchantBtn.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE}/v1/auth/demo-merchants/login`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({merchant_id: merchantId}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const detail = typeof data.detail === 'string' ? data.detail : data?.detail?.message;
+      loginEl.demoMerchantError.textContent = detail || `Sign-in failed (${res.status}).`;
+      loginEl.demoMerchantError.hidden = false;
+      return;
+    }
+    authSave(data);
+    await applySignedInUser();
+  } catch {
+    loginEl.demoMerchantError.textContent = `Cannot reach the pharmacy API at ${API_BASE}.`;
+    loginEl.demoMerchantError.hidden = false;
+  } finally {
+    loginEl.demoMerchantBtn.disabled = false;
+  }
+});
+
 for (const language of ASSISTANT_LANGUAGES) {
   const option = document.createElement('option');
   option.value = language.code;
@@ -149,3 +221,4 @@ loginEl.logoutBtn.onclick = () => signOut();
 renderCurrentUser();
 if (getUserId()) authConfirmRole().then(() => { if (getUserId()) applySignedInUser(); });
 else loginEl.loginEmail.focus();
+loadDemoMerchants();
