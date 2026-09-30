@@ -17,6 +17,22 @@ function userForget(key, storage = localStorage) {
   try { storage.removeItem(key); } catch {}
 }
 
+// What this device keeps for the people who sign in on it - their
+// conversations, the inspector's activity (tool calls, health information),
+// their location, the chat session pointer. Removed when someone signs out
+// and when someone new signs in, so the next person on this device never
+// sees it. App settings (the API address) belong to no user and stay.
+const USER_DATA_PREFIXES = ['siru_chat_', 'siru_sessions_', 'siru_activity_', 'siru_location_', 'siru_current_session_'];
+function userDataKey(key) { return USER_DATA_PREFIXES.some(prefix => key.startsWith(prefix)); }
+function userForgetDevice() {
+  for (const storage of [localStorage, sessionStorage]) {
+    try {
+      for (const key of Object.keys(storage)) if (userDataKey(key)) storage.removeItem(key);
+    } catch {}
+  }
+  for (const key of [...userMemory.keys()]) if (userDataKey(key)) userMemory.delete(key);
+}
+
 function sessionValid(session) {
   return Boolean(session?.access_token && session?.user?.id && session.expires_at * 1000 > Date.now());
 }

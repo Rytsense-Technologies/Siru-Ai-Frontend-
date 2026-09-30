@@ -1,5 +1,4 @@
-"""Local development server for this frontend - NOT used in production
-(Vercel serves the files itself). Like `python -m http.server`, but every
+"""The server for this frontend (local only - there is no cloud deployment). Like `python -m http.server`, but every
 response carries `Cache-Control: no-cache`: browsers revalidate each file
 (a 304 when it hasn't changed), so an update to index.html or a script is
 picked up on a normal reload - nobody needs a hard refresh.
@@ -19,11 +18,24 @@ from urllib.parse import unquote, urlsplit
 
 FRONTEND = Path(__file__).resolve().parent.parent
 
+# The page's Content-Security-Policy: only this site's own scripts (the
+# LiveKit client is vendored under vendor/), no inline script, no plugins, no
+# framing. connect-src: the local API (http://<host>:8010) and LiveKit
+# (ws://127.0.0.1:8880) are plain http/ws on this machine or the LAN.
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: blob:; "
+       "media-src 'self' blob: mediastream:; connect-src 'self' http: https: ws: wss:; worker-src 'self' blob:; "
+       "font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+PERMISSIONS = "microphone=(self), geolocation=(self), camera=(), payment=(), usb=()"
+
+
+# Development and test tooling - not part of the site .
+_PRIVATE_DIRS = frozenset({"dev", "tests", "node_modules", "test-results", "playwright-report"})
+
 
 def is_private(url_path: str) -> bool:
-    """A path that must not be served: a dotfile/dot-directory anywhere, or dev/."""
+    """A path that must not be served: a dotfile/dot-directory anywhere, or a tooling directory."""
     parts = [p for p in unquote(urlsplit(url_path).path).replace("\\", "/").split("/") if p]
-    return any(p.startswith(".") for p in parts) or (bool(parts) and parts[0] == "dev")
+    return any(p.startswith(".") for p in parts) or (bool(parts) and parts[0] in _PRIVATE_DIRS)
 
 
 class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
@@ -37,6 +49,10 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         # Stored, but always checked with the server first (If-Modified-Since -> 304).
         self.send_header("Cache-Control", "no-cache")
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", CSP)
+        self.send_header("Permissions-Policy", PERMISSIONS)
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header("X-Frame-Options", "DENY")
         super().end_headers()
 
 

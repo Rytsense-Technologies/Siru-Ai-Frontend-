@@ -1,7 +1,0 @@
-# Local-development files - never uploaded to Vercel, so never served.
-dev/
-images/generate.py
-.env
-.env.*
-README.md
-.github/

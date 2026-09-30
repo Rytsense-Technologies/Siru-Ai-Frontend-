@@ -47,7 +47,7 @@ const concierge = {
     // What the tools did, as streamed before turn_end (the trace channel):
     // each call's plane (core / ai), input, latency and the tables it read or
     // wrote, and the checkpoint writes - the inspector's Data tab.
-    const io = {calls:[], checkpoints:[]};
+    const io = {calls:[], checkpoints:[], data:[]};
     let buffer = '';
     let answered = false;
     let resolveTurn, rejectTurn;
@@ -80,7 +80,11 @@ const concierge = {
           tables_read:event.tables_read || [], tables_written:event.tables_written || [],
           table_planes:event.table_planes || {}});
       } else if (event.type === 'checkpoint' && !answered) {
-        io.checkpoints.push({thread:event.thread, tables_written:event.tables_written || []});
+        io.checkpoints.push({thread:event.thread, store:event.store, tables_written:event.tables_written || []});
+      } else if (event.type === 'data' && !answered) {
+        // Tables the turn touched outside any tool, as the server observed them.
+        io.data.push({tables_read:event.tables_read || [], tables_written:event.tables_written || [],
+          table_planes:event.table_planes || {}});
       }
       else if (event.type === 'error') {
         // The backend writes these for the user (concierge.py _turn_error).
@@ -250,7 +254,7 @@ const pharmacyApi = {
   async photo(imageB64, mimeType, onStep = null) {
     if (this.mode !== 'sandbox') throw new Error('Connect to the pharmacy first.');
     const turn = await concierge.turn({
-      session_id:shoppingSessionId, user_id:getUserId(), channel:'chat',
+      session_id:shoppingEnsureSession(), user_id:getUserId(), channel:'chat',
       input:{type:'upload', image_b64:imageB64, mime_type:mimeType}, history:[], context:{},
     }, onStep);
     return {message:turn.text || "The photo couldn't be read. Please try again.", trace:turn.trace, cards:turn.cards};
@@ -276,6 +280,10 @@ const pharmacyApi = {
   // Turns remembering on or off for the signed-in user (the consent switch).
   async setMemoryConsent(enabled) {
     return apiFetch('/v1/memory/me/consent', {method: 'PUT', body: JSON.stringify({enabled})});
+  },
+  // Forgets everything this app keeps about the signed-in user (DELETE /v1/memory/me).
+  async forgetEverything() {
+    return apiFetch('/v1/memory/me', {method: 'DELETE'});
   },
   // Forgets one remembered fact (the Memory tab's bin icon).
   async forgetMemory(id) {

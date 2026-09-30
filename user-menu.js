@@ -61,10 +61,11 @@ async function applySignedInUser() {
 
 async function signOut(message = '') {
   await stopVoiceSession();
-  // The chat of the session being left is kept, just no longer shown; memory,
-  // cart and orders live on the server and are not touched. The next sign-in
-  // starts a new, empty session (userStartSession below).
+  // Nothing of the person leaving stays on this device: their chat, the
+  // inspector's activity and their location are removed (users.js
+  // userForgetDevice). Memory, cart and orders live on the server, untouched.
   userEndSession(getUserId());
+  userForgetDevice();
   // Where the user was is not kept past their sign-in.
   locationEnd(getUserId());
   // The token is revoked on the server too (POST /v1/auth/logout), so a copy
@@ -115,6 +116,7 @@ loginEl.loginForm.addEventListener('submit', async event => {
       return;
     }
     loginEl.loginPassword.value = '';
+    userForgetDevice();  // a new sign-in: nothing a previous person left on this device
     authSave(data);
     // A fresh chat for every sign-in. The session itself is created when the
     // user first types or speaks (users.js userEnsureSession), so signing in
@@ -191,6 +193,7 @@ loginEl.demoMerchantBtn?.addEventListener('click', async () => {
       loginEl.demoMerchantError.hidden = false;
       return;
     }
+    userForgetDevice();  // a new sign-in: nothing a previous person left on this device
     authSave(data);
     await applySignedInUser();
   } catch {

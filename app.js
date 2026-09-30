@@ -8,9 +8,8 @@ function savedApiBase() {
   }
   return "";
 }
-// The backend's address: config.js (the one place it is set - on Vercel,
-// written at build time from PUBLIC_API_BASE_URL). Without one (local
-// development): the "Server settings" address, else this host's port 8010.
+// The backend's address: config.js when it names one; otherwise the "Server
+// settings" address, else this host's port 8010 (the local API).
 const CONFIGURED_API_BASE = String(window.SIRU_CONFIG?.apiBaseUrl || window.MEDICINE_API_BASE || '').trim();
 const LOCAL_API_PORT = 8010;
 const API_BASE = (CONFIGURED_API_BASE || savedApiBase() ||
@@ -147,7 +146,7 @@ function renderAskResult(data) {
 
   if (data.product_id != null) {
     const entity = (data.intent && data.intent.entity) || "this item";
-    html += `<button class="buy-btn" data-product-id="${data.product_id}" data-product-name="${escapeHtml(entity)}">Buy (demo)</button>`;
+    html += `<button class="buy-btn" data-product-id="${escapeHtml(data.product_id)}" data-product-name="${escapeHtml(entity)}">Buy (demo)</button>`;
   }
 
   el.askResult.className = "ask-result";
@@ -391,6 +390,17 @@ async function startVoiceSession() {
         }
       });
     }
+    // The voice worker's own state (LiveKit agents publish it as the
+    // participant attribute lk.agent.state): back to "Listening" as soon as it
+    // has finished speaking - its audio track never "ends", so without this
+    // the status stayed "speaking" until the user spoke again.
+    room.on(LivekitClient.RoomEvent.ParticipantAttributesChanged, (changed, participant) => {
+      if (room !== voiceRoom || !participant || participant.identity === userId) return;
+      const state = changed?.['lk.agent.state'];
+      if (state === 'speaking') setVoiceStatus('SIRU AI is speaking...');
+      else if (state === 'thinking') setVoiceStatus('Processing...');
+      else if (state === 'listening') setVoiceStatus(micMuted ? "Mic off - waiting for reply" : "Listening - speak anytime");
+    });
     room.on(LivekitClient.RoomEvent.Reconnected, () => { if (room === voiceRoom) surface.onReconnected(); });
     // The voice worker joins the room on its own; if none does, say so rather
     // than listening to nobody.
@@ -589,7 +599,7 @@ async function purchaseProduct(btn) {
   btn.textContent = "Processing...";
 
   try {
-    const data = await apiFetch(`/v1/catalog/products/${productId}/demo-purchase?user_id=${encodeURIComponent(userId)}`, {
+    const data = await apiFetch(`/v1/catalog/products/${encodeURIComponent(productId)}/demo-purchase?user_id=${encodeURIComponent(userId)}`, {
       method: "POST",
     });
     btn.textContent = "Purchased";
@@ -683,14 +693,14 @@ function renderNotifications(items) {
 
   el.notifList.innerHTML = sorted
     .map((item) => {
-      const meta = STATUS_META[item.status] || { icon: "info", label: item.status };
+      const meta = STATUS_META[item.status] || { icon: "info", label: String(item.status ?? "") };
       const when = new Date(item.created_at).toLocaleString();
       return `
-        <div class="notif-item status-${item.status}">
+        <div class="notif-item status-${escapeHtml(item.status)}">
           <span class="notif-icon" data-icon="${meta.icon}"></span>
           <div class="notif-body">
             <div class="notif-entity">${escapeHtml(item.entity || "item")}</div>
-            <div class="notif-meta">${meta.label} - ${escapeHtml(item.intent)} - ${when}</div>
+            <div class="notif-meta">${escapeHtml(meta.label)} - ${escapeHtml(item.intent)} - ${escapeHtml(when)}</div>
           </div>
         </div>`;
     })
@@ -770,9 +780,9 @@ function renderProducts(products) {
       const priceLabel = p.price != null ? `$${Number(p.price).toFixed(2)}` : "";
       const actionHtml = p.in_stock
         ? ""
-        : `<button data-product-id="${p.id}" data-product-name="${escapeHtml(p.name)}" class="restock-btn">Simulate restock</button>`;
+        : `<button data-product-id="${escapeHtml(p.id)}" data-product-name="${escapeHtml(p.name)}" class="restock-btn">Simulate restock</button>`;
       return `
-        <div class="product-item" data-row-for="${p.id}">
+        <div class="product-item" data-row-for="${escapeHtml(p.id)}">
           <div class="product-info">
             <div class="product-name">${escapeHtml(p.name)}</div>
             <div class="product-meta">${escapeHtml(p.category || "")} ${priceLabel}</div>
@@ -795,8 +805,8 @@ async function simulateRestock(btn) {
   btn.textContent = "Restocking...";
 
   try {
-    const data = await apiFetch(`/v1/catalog/products/${productId}/restock`, { method: "POST" });
-    const row = el.productList.querySelector(`[data-row-for="${productId}"]`);
+    const data = await apiFetch(`/v1/catalog/products/${encodeURIComponent(productId)}/restock`, { method: "POST" });
+    const row = el.productList.querySelector(`[data-row-for="${CSS.escape(productId)}"]`);
     if (row) {
       const notifiedCount = (data.notified_user_ids || []).length;
       row.innerHTML = `
@@ -840,11 +850,7 @@ function showToast({ icon = "bell", type = "info", body }) {
 
 // ---------- utils ----------
 
-function escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str;
-  return div.innerHTML;
-}
+// escapeHtml / safeImageUrl: safe-dom.js (loaded before this file).
 
 // ---------- init ----------
 

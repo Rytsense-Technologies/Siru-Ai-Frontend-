@@ -1,0 +1,12 @@
+{
+  "name": "siru-frontend",
+  "private": true,
+  "description": "Siru web app (static, no build step). Dev dependencies are for the browser tests only - nothing here is shipped.",
+  "scripts": {
+    "test:browser": "playwright test --config tests/playwright.config.cjs",
+    "test:e2e": "playwright test --config tests/e2e/e2e.config.cjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

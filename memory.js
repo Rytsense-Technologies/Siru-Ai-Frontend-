@@ -8,6 +8,7 @@
 const memoryEl = Object.fromEntries([
   "memoryList", "memoryEmpty", "memoryCount", "memoryCountTop", "memoryStatus",
   "memoryConsent", "memoryConsentNote", "stmBadge", "stmSummary", "stmRecent", "memoryCart", "memoryOrders",
+  "memoryForgetAll",
 ].map(id => [id, document.getElementById(id)]));
 
 const MEMORY_LABELS = {
@@ -132,7 +133,7 @@ function stateImage(src) {
   img.width = 48;
   img.height = 48;
   img.loading = 'lazy';
-  img.src = src || STATE_PLACEHOLDER;
+  img.src = safeImageUrl(src, STATE_PLACEHOLDER);
   img.onerror = () => { img.onerror = null; img.src = STATE_PLACEHOLDER; };
   return img;
 }
@@ -277,3 +278,25 @@ memoryEl.memoryConsent.onchange = async event => {
 };
 
 document.getElementById('memoryBtn').onclick = () => panelShow('memory', {toggle: true});
+
+// "Forget everything": the server deletes what it keeps about this user in
+// every store it owns, and this device's copies of their chats and activity
+// go too. Their cart and orders are business records and stay.
+memoryEl.memoryForgetAll.onclick = async () => {
+  const owner = getUserId();
+  if (!owner || !window.confirm('Forget everything Siru remembers about you? Your cart and orders stay.')) return;
+  memoryEl.memoryForgetAll.disabled = true;
+  try {
+    const result = await pharmacyApi.forgetEverything();
+    if (owner !== getUserId()) return;
+    userForgetDevice();
+    memoryEl.memoryStatus.textContent = result?.complete === false
+      ? "Forgotten - but part of it couldn't be reached just now; what's left expires within a day."
+      : 'Forgotten. Siru no longer remembers anything about you.';
+    memoryRefresh();
+  } catch (error) {
+    memoryEl.memoryStatus.textContent = `Couldn't forget just now: ${pharmacyError(error)}`;
+  } finally {
+    memoryEl.memoryForgetAll.disabled = false;
+  }
+};

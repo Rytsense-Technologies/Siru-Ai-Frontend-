@@ -153,7 +153,7 @@ function chatEntry({role = 'assistant', label = '', agent = '', time = null, cla
 
 // A message outside any turn: the greeting, "could you say that again",
 // connection notices. Saved in the chat history.
-// `kind` 'greeting': the sign-in welcome and the voice greeting - shown and
+// `kind` 'greeting': the voice greeting - shown and
 // kept with the chat, but UI events, never sent to the assistant as history.
 function shoppingMessage(text, role = "assistant", source = "text", id = crypto.randomUUID(), savedTime = null, restore = false, kind = null) {
   if (!getUserId()) return document.createElement('div');
@@ -448,37 +448,50 @@ function shoppingLivePreview(text) {
   shopEl.liveTranscript.hidden = !text;
 }
 
+// The catalog's names, ids and image addresses are data (safe-dom.js): these
+// rows are built with DOM calls, never an HTML string.
+function shoppingProductCard(p) {
+  const name = String(p.name ?? '');
+  const selected = shop.selected === p.id;
+  const card = el_('article', selected ? 'medicine-card selected' : 'medicine-card');
+  card.dataset.id = String(p.id ?? '');
+  const select = el_('button', 'select-product');
+  select.type = 'button';
+  select.setAttribute('aria-pressed', String(selected));
+  select.setAttribute('aria-label', `Select ${name}`);
+  select.append(safeImage(p.image_url, { alt: `Illustration of ${name}`, width: 180, height: 130 }),
+    el_('strong', '', name), el_('span', 'muted', p.pack_size ?? ''));
+  const price = el_('div', 'medicine-price', `${money(p.price_paise)} `);
+  price.append(el_('span', 'muted small', '/ pack'));
+  const label = el_('label', 'quantity-label', 'Packs ');
+  const quantity = el_('input', 'product-qty');
+  Object.assign(quantity, { type: 'number', min: '1', max: '99', step: '1', value: String(selected ? shop.quantity : 1) });
+  quantity.setAttribute('aria-label', `Quantity for ${name}`);
+  label.append(quantity);
+  const add = el_('button', 'add-product', 'Add to cart');
+  add.type = 'button';
+  card.append(select, price, label, add);
+  const validQuantity = () => {
+    if (!quantity.reportValidity()) return null;
+    return Number(quantity.value);
+  };
+  select.onclick = () => {
+    const qty = validQuantity();
+    if (qty) shoppingSelect(p, qty);
+  };
+  quantity.onchange = () => {
+    const qty = validQuantity();
+    if (qty) shoppingSelect(p, qty);
+  };
+  add.onclick = () => {
+    const qty = validQuantity();
+    if (qty) shoppingSubmit(`Add ${qty} packs of ${name}`);
+  };
+  return card;
+}
+
 function shoppingRenderProducts() {
-  shopEl.medicineList.innerHTML = shop.products.map(p => `
-    <article class="medicine-card ${shop.selected === p.id ? "selected" : ""}" data-id="${p.id}">
-      <button type="button" class="select-product" aria-pressed="${shop.selected === p.id}" aria-label="Select ${escapeHtml(p.name)}">
-        <img src="${p.image_url}" alt="Illustration of ${escapeHtml(p.name)}" width="180" height="130">
-        <strong>${escapeHtml(p.name)}</strong><span class="muted">${escapeHtml(p.pack_size)}</span>
-      </button>
-      <div class="medicine-price">${money(p.price_paise)} <span class="muted small">/ pack</span></div>
-      <label class="quantity-label">Packs <input class="product-qty" type="number" min="1" max="99" step="1" value="${shop.selected === p.id ? shop.quantity : 1}" aria-label="Quantity for ${escapeHtml(p.name)}"></label>
-      <button type="button" class="add-product">Add to cart</button>
-    </article>`).join("");
-  shopEl.medicineList.querySelectorAll(".medicine-card").forEach(card => {
-    const p = shop.products.find(product => product.id === card.dataset.id);
-    const quantity = card.querySelector(".product-qty");
-    const validQuantity = () => {
-      if (!quantity.reportValidity()) return null;
-      return Number(quantity.value);
-    };
-    card.querySelector(".select-product").onclick = () => {
-      const qty = validQuantity();
-      if (qty) shoppingSelect(p, qty);
-    };
-    quantity.onchange = () => {
-      const qty = validQuantity();
-      if (qty) shoppingSelect(p, qty);
-    };
-    card.querySelector(".add-product").onclick = () => {
-      const qty = validQuantity();
-      if (qty) shoppingSubmit(`Add ${qty} packs of ${p.name}`);
-    };
-  });
+  shopEl.medicineList.replaceChildren(...shop.products.map(shoppingProductCard));
   shoppingControls();
 }
 
@@ -536,21 +549,7 @@ function shoppingRenderCart(cart) {
   shop.cart = cart;
   if (shop.billedKey === null) shop.billedKey = shoppingCartKey(cart);
   // One compact row per item: name, pack and quantity × price, line total, Remove.
-  shopEl.cartItems.innerHTML = cart.items.length ? cart.items.map(item => `
-    <div class="cart-item">
-      <img src="${item.image_url}" alt="" width="36" height="36">
-      <div class="cart-item-info"><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>
-        <span class="muted small">${[escapeHtml(item.pack_size), `${item.qty} × ${money(item.price_paise)}`].filter(Boolean).join(' · ')}</span>
-      </div>
-      <div class="cart-item-side"><strong>${money(item.line_total_paise)}</strong>
-        <span class="cart-qty" role="group" aria-label="Quantity of ${escapeHtml(item.name)}">
-          <button type="button" class="qty-btn" data-id="${item.id}" data-step="-1" aria-label="One less ${escapeHtml(item.name)}">−</button>
-          <span class="qty-value">${item.qty}</span>
-          <button type="button" class="qty-btn" data-id="${item.id}" data-step="1" aria-label="One more ${escapeHtml(item.name)}">+</button>
-        </span>
-        <button type="button" class="remove-product link-btn" data-id="${item.id}" aria-label="Remove ${escapeHtml(item.name)}">Remove</button>
-      </div>
-    </div>`).join("") : '<div class="empty-cart"><span class="empty-cart-icon" data-icon="bag" aria-hidden="true"></span><p>Your cart is empty.</p><small>Say or type a medicine\'s name to get started.</small></div>';
+  shopEl.cartItems.replaceChildren(...(cart.items.length ? cart.items.map(shoppingCartRow) : [shoppingEmptyCart()]));
   iconsHydrate(shopEl.cartItems);
   // The bill (delivery, store) while it is for this very cart; else the items' total.
   const bill = shop.bill && shop.bill.key === shoppingCartKey(cart) ? shop.bill.snapshot : null;
@@ -564,16 +563,52 @@ function shoppingRenderCart(cart) {
   shopEl.cartBtn.setAttribute('aria-label', `Cart, ${count} item${count === 1 ? '' : 's'}`);
   shopEl.placeOrderBtn.textContent = cart.items.length ? `Place demo order · ${money(total)}` : 'Place demo order';
   if (typeof memoryCartRender === 'function') memoryCartRender(cart);  // the Memory tab's cart card
-  shopEl.cartItems.querySelectorAll(".remove-product").forEach(button => {
-    button.onclick = () => shoppingSubmit(`Remove ${cart.items.find(p => p.id === button.dataset.id).name}`);
-  });
+  shoppingControls();
+}
+
+function shoppingEmptyCart() {
+  const empty = el_('div', 'empty-cart');
+  const art = el_('span', 'empty-cart-icon');
+  art.dataset.icon = 'bag';
+  art.setAttribute('aria-hidden', 'true');
+  empty.append(art, el_('p', '', 'Your cart is empty.'), el_('small', '', "Say or type a medicine's name to get started."));
+  return empty;
+}
+
+// A cart line from the server - its name, id and image are data, set with DOM calls.
+function shoppingCartRow(item) {
+  const name = String(item.name ?? '');
+  const row = el_('div', 'cart-item');
+  const info = el_('div', 'cart-item-info');
+  const title = el_('strong', '', name);
+  title.title = name;
+  info.append(title, el_('span', 'muted small',
+    [item.pack_size, `${item.qty} × ${money(item.price_paise)}`].filter(Boolean).join(' · ')));
+  const side = el_('div', 'cart-item-side');
+  const qty = el_('span', 'cart-qty');
+  qty.setAttribute('role', 'group');
+  qty.setAttribute('aria-label', `Quantity of ${name}`);
   // − / +: the same commands a user would type, so the server's cart (and
   // its checks) decide - one less of it, or one more of it from this pharmacy.
-  shopEl.cartItems.querySelectorAll(".qty-btn").forEach(button => {
-    const name = cart.items.find(p => p.id === button.dataset.id).name;
-    button.onclick = () => shoppingSubmit(button.dataset.step === '1' ? `Add one more ${name} to my cart` : `Remove one ${name}`);
-  });
-  shoppingControls();
+  const step = (symbol, delta, label, command) => {
+    const button = el_('button', 'qty-btn', symbol);
+    button.type = 'button';
+    button.dataset.id = String(item.id ?? '');
+    button.dataset.step = String(delta);
+    button.setAttribute('aria-label', `${label} ${name}`);
+    button.onclick = () => shoppingSubmit(command);
+    return button;
+  };
+  qty.append(step('−', -1, 'One less', `Remove one ${name}`), el_('span', 'qty-value', String(item.qty)),
+    step('+', 1, 'One more', `Add one more ${name} to my cart`));
+  const remove = el_('button', 'remove-product link-btn', 'Remove');
+  remove.type = 'button';
+  remove.dataset.id = String(item.id ?? '');
+  remove.setAttribute('aria-label', `Remove ${name}`);
+  remove.onclick = () => shoppingSubmit(`Remove ${name}`);
+  side.append(el_('strong', '', money(item.line_total_paise)), qty, remove);
+  row.append(safeImage(item.image_url, { width: 36, height: 36 }), info, side);
+  return row;
 }
 
 // ---------- a turn's bill or order receipt ----------
@@ -689,7 +724,7 @@ function shoppingBillCard(snapshot) {
   for (const item of snapshot.items) {
     const row = el_('div', 'bill-item');
     const image = el_('img');
-    image.src = item.image_url;
+    image.src = safeImageUrl(item.image_url);
     image.alt = '';
     image.width = 44;
     image.height = 44;
@@ -726,7 +761,7 @@ function shoppingBillCard(snapshot) {
 function productRow(product, badge) {
   const row = el_('div', 'card-product');
   const image = el_('img');
-  image.src = product.image_url || pharmacyApi.imageFor(product.name);
+  image.src = safeImageUrl(product.image_url || pharmacyApi.imageFor(product.name));
   image.alt = '';
   image.width = 44;
   image.height = 44;
@@ -817,9 +852,9 @@ function actionOutcome(data) {
 // A decided Confirm card's outcome, kept on the card in this chat's saved history:
 // redrawn after a reload it shows what happened, not live Confirm / Cancel buttons
 // for an action that was already decided.
-function confirmCardSettle(actionId, text) {
-  const owner = getUserId();
-  if (!owner || !actionId) return;
+function confirmCardSettle(actionId, text, owner = getUserId()) {
+  // Only into the chat of the user who decided it, still signed in.
+  if (!owner || !actionId || owner !== getUserId()) return;
   for (const record of userHistory(owner)) {
     const card = (record.cards || []).find(c => c?.kind === 'confirm_action' && c.actionId === actionId);
     if (!card) continue;
@@ -848,14 +883,20 @@ function shoppingConfirmCard(card, time) {
   }
   const actions = el_('div', 'confirm-actions');
   const decide = async (decision, button) => {
+    // Whose decision this is: the answer is only shown to, and kept for, that
+    // user - not whoever is signed in on this device when it arrives.
+    const owner = getUserId();
+    if (!owner) return;
     actions.querySelectorAll('button').forEach(b => { b.disabled = true; });
     button.textContent = decision === 'confirm' ? 'Confirming…' : 'Cancelling…';
     try {
       // The decision as a traced turn (POST /v1/concierge/turn, input.type "tap" -> actions.confirm /
       // cancel): what it did - the order written to this app's own records - reaches the inspector
       // like any turn's tools and tables. Same outcome as POST /v1/actions/{id}/{decision}.
-      const answer = await concierge.turn({session_id: shoppingSessionId, user_id: getUserId(), channel: 'chat',
+      // A check-in's Confirm right after sign-in has no chat session yet: it starts one.
+      const answer = await concierge.turn({session_id: shoppingEnsureSession(), user_id: owner, channel: 'chat',
         input: {type: 'tap', action_id: card.actionId, decision}, history: [], context: {}});
+      if (owner !== getUserId()) return;  // signed out (or someone else signed in) meanwhile
       const data = answer.cards.find(c => c.kind === 'action_result') || null;
       shoppingActivityAdd({id: crypto.randomUUID(), record: {
         user: `${decision === 'confirm' ? 'Confirm' : 'Cancel'}: ${card.title || 'prepared action'}`, source: 'text',
@@ -873,6 +914,7 @@ function shoppingConfirmCard(card, time) {
       confirmCardSettle(card.actionId, status.textContent);
       shoppingRefresh();
     } catch (err) {
+      if (owner !== getUserId()) return;
       // Already decided or expired (409/410): nothing to retry - say why.
       if (err.status === 409 || err.status === 410 || err.status === 404) {
         status.textContent = `${err.message.replace(/^\d+\s*/, '')}. Nothing more was done.`;
@@ -1545,9 +1587,17 @@ function activityStep(step, calls = [], checkpoints = []) {
       badges: [el_('span', 'trace-tag', step.verdict || 'checked')], detail: step.detail || ''});
   }
   if (step.kind === 'checkpoint') {
+    // Where the server says it went (this process's memory, or Postgres) - and
+    // only the tables it reported, none for memory.
     const cp = checkpoints.shift();
-    return inspectorRow('STATE', {name: 'checkpointer.put', badges: [planeBadge('ai')], tone: 'state',
-      detail: step.name ? `thread ${step.name}` : '', extra: tableChips([], cp?.tables_written || [])});
+    const store = step.store || cp?.store || '';
+    return inspectorRow('STATE', {name: 'checkpoint saved', tone: 'state',
+      badges: [store && el_('span', 'trace-tag', store === 'postgres' ? 'Postgres' : 'in memory')],
+      detail: step.name ? `thread ${step.name}` : '', extra: tableChips([], cp?.tables_written || step.tables_written || [])});
+  }
+  if (step.kind === 'data') {
+    return inspectorRow('DATA', {name: 'database', tone: 'state',
+      extra: tableChips(step.tables_read || [], step.tables_written || [])});
   }
   // a tool
   const index = calls.findIndex(call => call.name === step.name && !call.used);
@@ -1678,10 +1728,15 @@ function inspectorTables(items) {
       for (const table of call.tables_read || []) if (!(call.tables_written || []).includes(table)) touch(table, false, call.name, plane(table));
     }
     for (const cp of item.trace?.io?.checkpoints || []) for (const table of cp.tables_written || []) touch(table, true, 'checkpointer', 'ai');
+    // Tables touched outside any tool (the cart saved after the agent), as observed.
+    for (const data of item.trace?.io?.data || []) {
+      for (const table of data.tables_written || []) touch(table, true, 'turn', data.table_planes?.[table]);
+      for (const table of data.tables_read || []) if (!(data.tables_written || []).includes(table)) touch(table, false, 'turn', data.table_planes?.[table]);
+    }
     // Memory: long-term facts (app database) and this conversation's recent turns (Redis).
     for (const step of (item.trace?.steps || []).filter(step => step.kind === 'memory')) {
-      for (const table of step.tables_written || []) touch(table, true, `memory ${step.name}`, 'ai');
-      for (const table of step.tables_read || []) touch(table, false, `memory ${step.name}`, 'ai');
+      for (const table of step.tables_written || []) touch(table, true, `memory ${step.name}`, step.table_planes?.[table] || 'ai');
+      for (const table of step.tables_read || []) touch(table, false, `memory ${step.name}`, step.table_planes?.[table] || 'ai');
       if (step.store === 'redis' && step.status === 'done' && step.name !== 'short-term empty') {
         touch('redis · short-term conversation', step.name === 'short-term saved', 'short-term memory', 'ai');
       }
@@ -1878,9 +1933,9 @@ shopEl.activityClose.onclick = () => shopEl.activityPanel.classList.remove('open
 // saves in the background): add it to that turn's log and update the tab.
 function shoppingMemoryEvent({turn_id, status = 'saved', count = 0, short_term = null}) {
   // Long-term memory (the app database): what the turn taught, if anything.
-  const steps = [{kind: 'memory', status: status === 'failed' ? 'error' : 'done', count,
-    name: status === 'failed' ? 'save failed' : (count ? 'saved' : 'nothing new'),
-    tables_written: status !== 'failed' && count ? ['long_term_memories'] : []}];
+  // What the worker reported - a count and an outcome; no table is named that it didn't report.
+  const steps = [{kind: 'memory', store: 'app_db', status: status === 'failed' ? 'error' : 'done', count,
+    name: status === 'failed' ? 'save failed' : (count ? 'saved' : 'nothing new')}];
   // Short-term memory (Redis): the turn joined this conversation's recent turns - as a typed turn's does.
   if (short_term === 'saved' || short_term === 'failed') {
     steps.push({kind: 'memory', store: 'redis', status: short_term === 'saved' ? 'done' : 'error',
@@ -2034,6 +2089,9 @@ function turnRestore(record) {
 // A message outside any turn (the greeting, a notice) in this session.
 function messageRestore(message) {
   if (typeof message.text !== 'string') return;
+  // A typed welcome an earlier version saved - no longer shown (the spoken
+  // greeting, source 'voice', still is).
+  if (message.kind === 'greeting' && message.source !== 'voice') return;
   shoppingMessage(message.text, message.role, message.source, message.id, message.timestamp, true, message.kind || null);
 }
 
@@ -2081,7 +2139,7 @@ async function shoppingResetUser() {
   await stopVoiceSession();
   if (generation !== shop.generation) return;
   if (!getUserId()) return;
-  // The session-open moment (the welcome, due check-ins) needs only the
+  // The session-open moment (due check-ins) needs only the
   // sign-in, not the pharmacy: it ran only once the catalog had loaded, so the
   // first sign-in after opening the page (catalog not loaded yet) skipped it.
   shoppingOpenSession();
@@ -2111,12 +2169,8 @@ async function shoppingOpenSession() {
     return;  // an older API without the route - nothing to bring up
   }
   if (owner !== getUserId()) return;
-  // "Hi Kumar, welcome back!" - the server sends it once per sign-in, with the
-  // name from the signed-in account (not from this page), so a reload or a
-  // re-render never repeats it; a reload shows the saved one instead.
-  if (typeof data.welcome === 'string' && data.welcome) {
-    shoppingMessage(data.welcome, 'assistant', 'text', `welcome-${crypto.randomUUID()}`, null, false, 'greeting');
-  }
+  // No typed greeting: the chat opens empty and the first message is the
+  // user's. Siru greets by voice, when the microphone is first turned on.
   for (const card of data.cards || []) {
     const turnId = crypto.randomUUID();
     shoppingTurn(turnId, {source: 'text'});
