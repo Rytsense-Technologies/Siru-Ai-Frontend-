@@ -728,3 +728,18 @@ html.shop-open, html.shop-open body { overflow: hidden; }
 @media (max-width: 600px) {
   .inspector-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* ---------- long values wrap inside their own component ----------
+   Product, pharmacy and table names, ids, error codes and option labels can be
+   one unbroken string: they wrap where they are instead of widening the chat
+   (its own horizontal scrollbar) or the inspector's cards. */
+.card-store strong, .card-store span, .card-note, .card-action { overflow-wrap: anywhere; }
+.card-action { max-width: 100%; }
+.confirm-row > * { min-width: 0; overflow-wrap: anywhere; }
+.confirm-row > strong { text-align: right; }
+.data-name, .table-chip, .trace-id, .trace-status, .inspector .agent-chip { min-width: 0; overflow-wrap: anywhere; }
+.table-chip { max-width: 100%; }
+/* A turn's summary is a grid: without this its rows grow to their longest word. */
+.inspector .agent-activity > summary > * { min-width: 0; }
+/* The chat header's buttons and status wrap on the narrowest phones instead of spilling out. */
+.chat-heading-side { flex-wrap: wrap; flex-shrink: 1; min-width: 0; }

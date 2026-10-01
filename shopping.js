@@ -134,9 +134,18 @@ function clockTime(time) {
 }
 
 // Keep the newest message in view, unless the user scrolled up to read.
+// Whether the reader is at the newest message. New content follows only then -
+// someone reading an earlier turn stays where they are. Content growing below
+// (a reply, a streamed step) doesn't change it; only the reader's scrolling does.
+let chatAtBottom = true;
+shopEl.chatMessages.addEventListener('scroll', () => {
+  const box = shopEl.chatMessages;
+  chatAtBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 160;
+}, {passive: true});
+
 function chatScroll(force = false) {
   const box = shopEl.chatMessages;
-  if (force || box.scrollHeight - box.scrollTop - box.clientHeight < 160) box.scrollTop = box.scrollHeight;
+  if (force || chatAtBottom) box.scrollTop = box.scrollHeight;
 }
 
 // One chat entry: "SIRU AI · <agent> · Chat · 3:40 PM" over its content.
@@ -165,7 +174,7 @@ function shoppingMessage(text, role = "assistant", source = "text", id = crypto.
   bubble.dataset.messageId = id;
   entry.append(bubble);
   shopEl.chatMessages.appendChild(entry);
-  chatScroll(!restore);
+  if (!restore) chatScroll();
   if (!restore) userSaveMessage(getUserId(), {id, role, text, source, timestamp: iso, ...(kind ? {kind} : {})});
   return bubble;
 }
@@ -303,6 +312,7 @@ function turnActivityStep(turn, step) {
   else box.querySelector('.activity-steps').append(row);
   turn.activity.set(key, row);
   turnActivitySummary(box);
+  chatScroll();
 }
 
 // The answer (or its failure) arrived: collapsed to one line, kept with the
@@ -423,7 +433,7 @@ function shoppingTurnFinish(turnId, {status = 'answered', reply = '', agent = ''
     if (open.view === 'orders') shoppingOrders();
     else cartDialogShow({confirm: shoppingPendingCheckout()});
   }
-  chatScroll(turn.el === shopEl.chatMessages.lastElementChild);
+  chatScroll();
   const placed = (trace?.steps || []).find(step => step.kind === 'tool' && step.name === 'create_order'
     && step.status === 'done' && step.result?.status === 'placed');
   // A turn can teach Siru something new (memory/extractor.py). Voice saves it
@@ -662,7 +672,7 @@ function turnReceipt(turn, snapshot) {
   turn.el.append(shoppingBillMessage(snapshot, time));
   turn.record.receipts = [...(turn.record.receipts || []), {snapshot, timestamp: time}];
   turnSave(turn);
-  chatScroll(turn.el === shopEl.chatMessages.lastElementChild);
+  chatScroll();
 }
 
 // What the card shows, saved as-is in the chat history (a receipt of that moment).
@@ -1205,20 +1215,31 @@ function shoppingChoicesCard(card, time) {
 
 async function shoppingPrepareBooking(doctor, slot, dateLabel) {
   if (shop.busy || !getUserId()) return;
+  const owner = getUserId();
+  const generation = shop.generation;
   const turnId = crypto.randomUUID();
   shop.busy = true;
   shoppingControls();
-  shoppingTurn(turnId, {userText: `Book ${doctor.name}, ${dateLabel} at ${slot.label}`, source: 'text'});
+  const turn = shoppingTurn(turnId, {userText: `Book ${doctor.name}, ${dateLabel} at ${slot.label}`, source: 'text'});
+  const reply = 'Please check the booking below and confirm it. Nothing is booked until you do.';
   try {
     const data = await apiFetch('/v1/actions/bookings', {method: 'POST', body: JSON.stringify({
       doctor_code: doctor.code, start_time: slot.startTime, mode: slot.mode || null})});
-    shoppingTurnFinish(turnId, {reply: 'Please check the booking below and confirm it. Nothing is booked until you do.',
-      cards: [data.card]});
+    if (generation !== shop.generation) {
+      // The user changed meanwhile: the prepared booking goes to its owner's history only.
+      Object.assign(turn.record, {status: 'answered', reply, cards: [data.card]});
+      userSaveMessage(owner, turn.record);
+      return;
+    }
+    shoppingTurnFinish(turnId, {reply, cards: [data.card]});
   } catch (err) {
+    if (generation !== shop.generation) return;
     shoppingTurnFinish(turnId, {status: 'failed', reply: `Couldn't prepare that booking. ${pharmacyError(err)}`});
   } finally {
-    shop.busy = false;
-    shoppingControls();
+    if (generation === shop.generation) {
+      shop.busy = false;
+      shoppingControls();
+    }
   }
 }
 

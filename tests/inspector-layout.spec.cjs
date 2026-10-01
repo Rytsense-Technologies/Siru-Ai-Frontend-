@@ -143,6 +143,63 @@ test('on a phone the inspector is a drawer: closed until asked, closed by its X'
   expect(await offscreen()).toBe(true);
 });
 
+test('long unbroken values wrap inside their cards, never widening the chat or the inspector', async ({ page }) => {
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({width, height: 900});
+    const result = await page.evaluate(async () => {
+      const long = 'Unbroken'.repeat(30);
+      const id = crypto.randomUUID();
+      shoppingTurn(id, {userText: long, source: 'text'});
+      await shoppingTurnFinish(id, {status: 'answered', reply: long, cards: [
+        {kind: 'pharmacy_offer', pharmacy: {name: long, distanceKm: 1, etaMin: 20}, product: {name: long, inStock: true}, note: long},
+        {kind: 'confirm_action', actionId: 'a1', title: 'Place this order', rows: [{label: 'Deliver to', value: long}]},
+        {kind: 'choices', question: 'Which one?', options: [{label: long, value: 'x'}]},
+      ], trace: {steps: [{id: 1, kind: 'tool', name: 'search_products', status: 'error', at_ms: 1}], failed: true, error: long,
+        io: {calls: [{name: 'search_products', plane: 'core', tables_read: [long], tables_written: []}]}, trace_id: long, total_ms: 1, usage: {llm_calls: 0}}});
+      document.querySelectorAll('.inspector .agent-activity').forEach(d => d.open = true);
+      const tabs = {};
+      for (const tab of ['tools', 'data']) {
+        panelShow(tab);
+        const box = shopEl[`${tab}Tab`];
+        tabs[tab] = box.scrollWidth - box.clientWidth;
+      }
+      const chat = shopEl.chatMessages;
+      // clientWidth, not innerWidth: a headed window's scrollbar is not page overflow.
+      const doc = document.documentElement;
+      return {page: doc.scrollWidth - doc.clientWidth, chat: chat.scrollWidth - chat.clientWidth, ...tabs};
+    });
+    expect(result, `at ${width}px`).toEqual({page: 0, chat: 0, tools: 0, data: 0});
+  }
+});
+
+test('a reply arriving while the reader is on an earlier turn does not move the chat', async ({ page }) => {
+  const result = await page.evaluate(async ({ greeting }) => {
+    for (let i = 0; i < 12; i++) {
+      const id = crypto.randomUUID();
+      shoppingTurn(id, {userText: `question ${i}`, source: 'text'});
+      await shoppingTurnFinish(id, {status: 'answered', reply: `answer ${i}`, trace: structuredClone(greeting)});
+    }
+    const box = shopEl.chatMessages;
+    const settle = () => new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 20)));
+    const id = crypto.randomUUID();
+    shoppingTurn(id, {userText: 'a new question', source: 'text'});
+    await settle();
+    const ownAtBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 5;
+    box.scrollTop = 0;  // the reader goes back to an earlier turn
+    await settle();
+    await shoppingTurnFinish(id, {status: 'answered', reply: 'the answer', trace: structuredClone(greeting)});
+    shoppingMessage('a notice', 'assistant', 'text');
+    await settle();
+    const stayed = box.scrollTop === 0;
+    box.scrollTop = box.scrollHeight;  // back at the newest message: new content follows
+    await settle();
+    shoppingMessage('another notice', 'assistant', 'text');
+    await settle();
+    return {ownAtBottom, stayed, follows: box.scrollHeight - box.scrollTop - box.clientHeight < 5};
+  }, { greeting: GREETING });
+  expect(result).toEqual({ownAtBottom: true, stayed: true, follows: true});
+});
+
 test.afterEach(() => {
   expect(pageErrors).toEqual([]);
 });
