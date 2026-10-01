@@ -56,13 +56,20 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
 
+class Server(http.server.ThreadingHTTPServer):
+    # The page loads ~17 files at once (more with parallel test workers). With
+    # the default listen backlog (5), Windows refuses the overflow outright, so
+    # random scripts fail to load; Linux queues them instead.
+    request_queue_size = 128
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--bind", default="127.0.0.1", help="address to listen on (0.0.0.0 = the LAN too)")
     parser.add_argument("--port", type=int, default=5500)
     args = parser.parse_args()
     handler = functools.partial(NoCacheHandler, directory=str(FRONTEND))
-    with http.server.ThreadingHTTPServer((args.bind, args.port), handler) as server:
+    with Server((args.bind, args.port), handler) as server:
         print(f"Serving {FRONTEND} on http://{args.bind}:{args.port} (Cache-Control: no-cache)")
         server.serve_forever()
 

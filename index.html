@@ -163,10 +163,10 @@
     </div>
     <!-- This conversation's real turns (their SSE trace), summed up. -->
     <div class="inspector-stats" aria-label="This conversation">
-      <div class="stat"><strong id="statTools">0</strong><span>tool calls</span><em id="statToolsSplit"></em></div>
-      <div class="stat"><strong id="statTables">0</strong><span>tables touched</span></div>
-      <div class="stat"><strong id="statWrites">0</strong><span>table writes</span></div>
-      <div class="stat"><strong id="statModel">0</strong><span>model calls</span><em id="statTokens"></em></div>
+      <button type="button" class="stat" data-tab="tools"><small>Tool calls</small><strong id="statTools">0</strong><span>tool calls</span><em id="statToolsSplit"></em></button>
+      <button type="button" class="stat" data-tab="data"><small>Data</small><strong id="statTables">0</strong><span>tables touched</span><em><b id="statWrites">0</b> table writes</em></button>
+      <button type="button" class="stat" data-tab="memory"><small>Memory</small><strong id="statMemory">0</strong><span>memory steps</span></button>
+      <button type="button" class="stat" data-tab="ai"><small>AI layer</small><strong id="statModel">0</strong><span>model calls</span><em id="statTokens"></em></button>
     </div>
     <p class="inspector-legend"><span class="plane plane-core">Core API</span> existing platform tools and tables
       <span class="plane plane-ai">AI service</span> siru-ai-service, its own data</p>
@@ -174,7 +174,11 @@
       <button id="toolsTabBtn" class="panel-tab" role="tab" type="button" aria-selected="true" aria-controls="toolsTab">Tool calls <b id="activityCount">0</b></button>
       <button id="dataTabBtn" class="panel-tab" role="tab" type="button" aria-selected="false" aria-controls="dataTab">Data <b id="dataCount">0</b></button>
       <button id="memoryTabBtn" class="panel-tab" role="tab" type="button" aria-selected="false" aria-controls="memoryTab">Memory <b id="memoryCount">0</b></button>
+      <button id="aiTabBtn" class="panel-tab" role="tab" type="button" aria-selected="false" aria-controls="aiTab">AI layer <b id="aiCount">0</b></button>
     </div>
+    <!-- The turn the Data / Memory / AI layer views are about (shopping.js inspectorSelect):
+         the latest by default; a chat turn or a Tool calls card selects another. -->
+    <div id="inspectorTurn" class="inspector-turn" aria-live="polite"></div>
 
     <section id="toolsTab" role="tabpanel" aria-labelledby="toolsTabBtn">
       <p id="activityIgnored" class="noise-note" role="status" hidden></p>
@@ -183,6 +187,8 @@
     </section>
 
     <section id="dataTab" role="tabpanel" aria-labelledby="dataTabBtn" hidden>
+      <div id="turnData" class="turn-section"></div>
+      <h3 class="inspector-subhead">Whole conversation</h3>
       <p class="muted small">Every table this conversation's tools read (R) or wrote (W), as the server reported it.</p>
       <p id="dataEmpty" class="muted small">No tables touched yet.</p>
       <div id="dataList" class="data-list"></div>
@@ -190,6 +196,8 @@
     </section>
 
     <section id="memoryTab" role="tabpanel" aria-labelledby="memoryTabBtn" hidden>
+      <div id="turnMemory" class="turn-section"></div>
+      <h3 class="inspector-subhead">What Siru keeps</h3>
       <!-- Short-term: this conversation's recent turns in Redis (GET /v1/memory/me/short-term). -->
       <div class="memory-section">
         <div class="memory-section-head"><h3>Short-term</h3><span id="stmBadge" class="memory-badge">Not active</span></div>
@@ -217,6 +225,11 @@
       <div id="memoryList" class="memory-list"></div>
       <!-- DELETE /v1/memory/me: every fact, topic, check-in, conversation memory and checkpoint -->
       <button id="memoryForgetAll" type="button" class="link-btn memory-forget-all">Forget everything Siru remembers about me</button>
+    </section>
+
+    <!-- The selected turn's routing, agent, model calls, guards and checkpoint, as traced. -->
+    <section id="aiTab" role="tabpanel" aria-labelledby="aiTabBtn" hidden>
+      <div id="turnAi" class="turn-section"></div>
     </section>
   </aside>
 
