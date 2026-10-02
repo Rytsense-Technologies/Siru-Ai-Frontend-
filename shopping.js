@@ -33,7 +33,7 @@ const shopEl = Object.fromEntries([
   "activityClose", "liveTranscript", "toolsTab", "memoryTab", "toolsTabBtn", "memoryTabBtn",
   "activityIgnored", "micFilters", "dataTab", "dataTabBtn", "dataList", "dataEmpty", "dataCount", "dataVoiceNote",
   "inspectorSub", "statTools", "statToolsSplit", "statTables", "statWrites", "statModel", "statTokens",
-  "statMemory", "aiTab", "aiTabBtn", "aiCount", "inspectorTurn", "turnData", "turnMemory", "turnAi",
+  "guardrails", "guardCount", "guardBlocked", "guardList", "newChatBtn",
   "cartDialog", "cartBtn", "cartBill", "cartDialogNote", "cartConfirm", "cartTotalLabel",
 ].map(id => [id, document.getElementById(id)]));
 const money = paise => paise == null ? 'Price unavailable' : new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(paise / 100);
@@ -1856,7 +1856,7 @@ function inspectorSummary() {
   const tokens = reported.reduce((n, item) => n + (item.trace.usage.tokens_in || 0) + (item.trace.usage.tokens_out || 0), 0);
   const cached = reported.reduce((n, item) => n + (item.trace.usage.tokens_cached || 0), 0);
   const unreported = items.reduce((n, item) => n + (item.trace.usage?.tokens_unreported || 0), 0);
-  shopEl.statMemory.textContent = steps.filter(step => step.kind === 'memory').length;
+  guardrailsRender(items);
   shopEl.statTools.textContent = tools.length;
   shopEl.statToolsSplit.textContent = tools.length ? `${direct} direct · ${tools.length - direct} by model` : '';
   shopEl.statTables.textContent = tables.length;
@@ -1885,20 +1885,11 @@ function activityCounts() {
   inspectorSummary();
 }
 
-// ---------- Inspector: the selected turn (Data / Memory / AI layer) ----------
+// ---------- Inspector: the selected turn ----------
 //
-// One turn at a time: the latest when a turn arrives, or the one picked in the
-// chat or the Tool calls list. Everything shown is that turn's own trace.
+// A turn picked in the chat (or the latest one) is highlighted there and its
+// Tool calls card opened - the card itself shows every step of that turn.
 let inspectorTurnId = null;
-// The turn being streamed (typed): its steps so far, until its trace is saved.
-let inspectorLive = null;
-const AI_STEP_KINDS = new Set(['transcript', 'route', 'direct_tool', 'agent', 'llm', 'guard', 'location',
-  'confirmation', 'checkpoint']);
-
-function inspectorItems() {
-  const items = getUserId() ? userRead(activityKey(), []).filter(item => item.kind !== 'noise' && item.trace) : [];
-  return inspectorLive && !items.some(item => item.turn_id === inspectorLive.turn_id) ? [...items, inspectorLive] : items;
-}
 
 function inspectorSelect(turnId, {tab = null} = {}) {
   inspectorTurnId = turnId;
@@ -1914,78 +1905,55 @@ function inspectorSelect(turnId, {tab = null} = {}) {
     if (box.height && (at.top < box.top || at.top > box.bottom - 40)) shopEl.toolsTab.scrollTop += at.top - box.top - 8;
   }
   if (tab) panelShow(tab);
-  inspectorTurnRender();
 }
 
-function turnSectionHead(title, count) {
-  const head = el_('div', 'turn-section-head');
-  head.append(el_('h3', '', title), el_('span', 'pill', String(count)));
-  return head;
+// ---------- Inspector: guardrails ----------
+//
+// The safety and policy checks this conversation's turns reported - trace
+// steps of kind "guard" (multi_agent_framework/tracing.py): which check, what
+// it decided and the short reason the server gave. Never the model's
+// reasoning, and never a check that wasn't traced: a turn without a guard
+// step shows none here, not a "pass".
+const GUARD_LABELS = {
+  dose_lock: 'Dose lock', sentence_safety_check: 'Spoken sentence check', emergency_check: 'Emergency check',
+  rx_gate: 'Prescription gate', pii_mask: 'Personal data masking', spoken_confirmation: 'Spoken confirmation',
+  care_self_care: 'Self-care only (no product offered)', overlap_consent: 'Overlapping speech',
+  cart_guard: 'Cart guard', pharmacy_selection: 'Pharmacy selection required', allergy_check: 'Allergy check',
+  memory_consent: 'Memory consent', memory_safety: 'Memory safety', tool_refused: 'Tool call refused',
+};
+const GUARD_BLOCKS = new Set(['blocked', 'refused', 'declined', 'expired', 'required']);
+const GUARD_ERRORS = new Set(['error', 'unavailable', 'failed']);
+
+function guardTone(verdict) {
+  if (GUARD_BLOCKS.has(verdict)) return 'block';
+  if (GUARD_ERRORS.has(verdict)) return 'error';
+  return verdict === 'pass' || verdict === 'confirmed' ? 'pass' : 'note';
 }
 
-function inspectorTurnRender() {
-  const items = inspectorItems();
-  const index = items.findIndex(item => item.turn_id === inspectorTurnId);
-  const item = index >= 0 ? items[index] : null;
-  const bar = shopEl.inspectorTurn;
-  bar.replaceChildren();
-  if (!item) {
-    bar.append(el_('span', 'muted small', inspectorTurnId ? 'No trace was recorded for this turn.'
-      : 'No turns yet. Send a message and every step Siru takes shows up here.'));
-  } else {
-    const step = delta => {
-      const button = el_('button', 'icon-btn turn-nav', delta < 0 ? '‹' : '›');
-      button.type = 'button';
-      button.setAttribute('aria-label', delta < 0 ? 'Previous turn' : 'Next turn');
-      button.disabled = !items[index + delta];
-      button.onclick = () => inspectorSelect(items[index + delta].turn_id);
-      return button;
-    };
-    const what = el_('div', 'turn-what');
-    const top = el_('span', 'activity-top');
-    top.append(el_('strong', '', `Turn ${index + 1} of ${items.length}`),
-      el_('span', `activity-source${item.source === 'voice' ? ' voice' : ''}`, item.source === 'voice' ? 'Voice' : 'Chat'));
-    if (item.live) top.append(statusBadge('running'));
-    else if (item.trace.failed) top.append(statusBadge('failed'));
-    else if (item.trace.agent) top.append(el_('code', 'agent-chip', item.trace.agent));
-    if (item.trace.total_ms != null) top.append(el_('span', 'activity-time', activityMs(item.trace.total_ms)));
-    what.append(top, el_('span', 'activity-question', item.user ? `“${item.user}”` : 'Siru'));
-    bar.append(step(-1), what, step(1));
-  }
-  const steps = item?.trace.steps || [];
-
-  // Data: the tables this turn read and wrote, by system.
-  const tables = item ? inspectorTables([item]) : [];
-  shopEl.turnData.replaceChildren(turnSectionHead('This turn', tables.length));
-  if (tables.length) {
-    const list = el_('div', 'data-list');
-    list.append(...tables.map(dataRow));
-    shopEl.turnData.append(list);
-  } else {
-    shopEl.turnData.append(el_('p', 'turn-empty', item && item.source === 'voice' && !item.trace.io
-      ? "Voice turns don't report their tables." : 'No data read or written in this turn.'));
-  }
-
-  // Memory: what this turn read from or saved to short-term (Redis) and long-term (app database) memory.
-  const memory = steps.filter(s => s.kind === 'memory');
-  shopEl.turnMemory.replaceChildren(turnSectionHead('This turn', memory.length));
-  if (memory.length) {
-    const list = el_('ol', 'trace-rows');
-    memory.forEach(s => list.append(activityStep(s)));
-    shopEl.turnMemory.append(list);
-  } else shopEl.turnMemory.append(el_('p', 'turn-empty', 'No memory read or written in this turn.'));
-
-  // AI layer: routing, the agent, model calls, guards and the checkpoint, in order.
-  const ai = steps.filter(s => AI_STEP_KINDS.has(s.kind));
-  shopEl.aiCount.textContent = ai.length;
-  shopEl.turnAi.replaceChildren(turnSectionHead('This turn', ai.length));
-  if (ai.length) {
-    const list = el_('ol', 'trace-rows');
-    const checkpoints = [...(item.trace.io?.checkpoints || [])];
-    ai.forEach(s => list.append(activityStep(s, [], checkpoints)));
-    shopEl.turnAi.append(list);
-  } else shopEl.turnAi.append(el_('p', 'turn-empty', 'No AI layer steps reported for this turn.'));
-  if (item && !item.live) shopEl.turnAi.append(traceFooter(item.trace));
+function guardrailsRender(items) {
+  const rows = [];
+  items.forEach((item, index) => {
+    for (const step of item.trace.steps || []) {
+      if (step.kind === 'guard') rows.push({step, turn: index + 1, item});
+    }
+  });
+  shopEl.guardrails.hidden = !rows.length;
+  shopEl.guardCount.textContent = rows.length;
+  const blocked = rows.filter(row => guardTone(row.step.verdict) === 'block').length;
+  shopEl.guardBlocked.textContent = blocked ? `${blocked} blocked` : '';
+  shopEl.guardList.replaceChildren(...rows.reverse().map(({step, turn, item}) => {
+    const li = el_('li', `guard-row guard-${guardTone(step.verdict)}`);
+    const head = el_('div', 'guard-head');
+    head.append(el_('strong', '', GUARD_LABELS[step.name] || step.name || 'guard'),
+      el_('span', `guard-verdict guard-${guardTone(step.verdict)}`, step.verdict || 'checked'));
+    li.append(head);
+    const where = [`Turn ${turn}`, item.source === 'voice' ? 'voice' : 'chat',
+      step.at_ms != null ? `+${activityMs(step.at_ms)}` : ''].filter(Boolean).join(' · ');
+    li.append(el_('p', 'guard-meta', where));
+    if (step.detail) li.append(el_('p', 'guard-detail', String(step.detail)));
+    li.title = item.user ? `“${item.user}”` : '';
+    return li;
+  }));
 }
 
 function activityRender(item) {
@@ -2008,7 +1976,6 @@ function activityLiveStart(turn) {
   panel.append(summary, list);
   shopEl.activityList.prepend(panel);
   shopEl.activityEmpty.hidden = true;
-  inspectorLive = {turn_id: turn.id, user: turn.record.user, source: 'text', live: true, trace: {steps: []}};
   inspectorSelect(turn.id);
   return {panel, list, rows: new Map()};
 }
@@ -2020,16 +1987,10 @@ function activityLiveStep(live, step) {
   if (earlier) earlier.replaceWith(row);
   else live.list.append(row);
   if (step.id != null) live.rows.set(step.id, row);
-  const steps = inspectorLive?.trace.steps;
-  if (!steps || inspectorLive.turn_id !== live.panel.dataset.turnId) return;
-  const at = step.id != null ? steps.findIndex(s => s.id === step.id) : -1;
-  if (at >= 0) steps[at] = step; else steps.push(step);
-  if (inspectorTurnId === inspectorLive.turn_id) inspectorTurnRender();
 }
 
 function activityLiveEnd(live) {
   live?.panel.remove();
-  if (inspectorLive && inspectorLive.turn_id === live?.panel.dataset.turnId) inspectorLive = null;
 }
 
 // A failed turn's trace from its streamed steps: the model calls counted as
@@ -2065,8 +2026,7 @@ function activityRestore() {
   shopEl.activityList.replaceChildren();
   if (getUserId()) userRead(activityKey(), []).forEach(activityRender);
   activityCounts();
-  inspectorLive = null;
-  inspectorSelect(inspectorItems().at(-1)?.turn_id || null);
+  inspectorSelect((getUserId() ? userRead(activityKey(), []).filter(item => item.trace).at(-1)?.turn_id : null) || null);
 }
 
 function flash(node) {
@@ -2095,9 +2055,9 @@ function shoppingShowTurn(turnId) {
   flash(turn.el);
 }
 
-// The panel has four tabs: the turn-by-turn log, the tables those turns
-// touched, what Siru remembers, and the selected turn's AI layer.
-const PANEL_TABS = ['tools', 'data', 'memory', 'ai'];
+// The panel has three tabs: the turn-by-turn log, the tables those turns
+// touched, and what Siru remembers.
+const PANEL_TABS = ['tools', 'data', 'memory'];
 
 function panelShow(tab = 'tools', {toggle = false} = {}) {
   const panel = shopEl.activityPanel;
@@ -2118,10 +2078,39 @@ shopEl.activityBtn.onclick = () => panelShow('tools', {toggle: true});
 shopEl.toolsTabBtn.onclick = () => panelShow('tools');
 shopEl.dataTabBtn.onclick = () => panelShow('data');
 shopEl.memoryTabBtn.onclick = () => panelShow('memory');
-shopEl.aiTabBtn.onclick = () => panelShow('ai');
-// The summary cards open their view.
-for (const stat of document.querySelectorAll('.inspector-stats .stat[data-tab]')) stat.onclick = () => panelShow(stat.dataset.tab);
 shopEl.activityClose.onclick = () => shopEl.activityPanel.classList.remove('open');
+
+// ---------- New chat ----------
+//
+// A fresh conversation without signing out: a new conversation id - the chat,
+// the voice greeting (one per conversation), the pharmacy list and choice,
+// short-term memory and checkpoints all belong to it - and the server drops
+// what it still held to answer the old one ("yes", "the second one").
+// Long-term memory, household profiles, the cart and orders stay. The old
+// conversation's messages stay on this device, not shown.
+async function shoppingNewChat() {
+  const owner = getUserId();
+  if (!owner || (typeof isMerchant === 'function' && isMerchant())) return;
+  shopEl.newChatBtn.disabled = true;
+  try {
+    await stopVoiceSession();
+    let cleared = true;
+    try {
+      await apiFetch('/v1/concierge/conversation/new', {method: 'POST', body: '{}'});
+    } catch (error) {
+      cleared = false;
+      console.warn('siru: new conversation - pending answers not cleared on the server', error?.status || '');
+    }
+    if (getUserId() !== owner) return;
+    userStartSession(owner);
+    await shoppingResetUser();
+    if (!cleared) shoppingNotice("New chat started, but the server couldn't be reached to clear the last conversation's pending questions.");
+  } finally {
+    shopEl.newChatBtn.disabled = false;
+  }
+}
+
+shopEl.newChatBtn.onclick = shoppingNewChat;
 
 // ---------- voice turns from the worker (TURN_TOPIC) ----------
 
@@ -2143,7 +2132,6 @@ function shoppingMemoryEvent({turn_id, status = 'saved', count = 0, short_term =
     item.trace.steps = [...(item.trace.steps || []), ...steps];
     userWrite(activityKey(), saved);
     inspectorSummary();
-    if (turn_id === inspectorTurnId) inspectorTurnRender();
   }
   const rows = shopEl.activityList.querySelector(`.agent-activity[data-turn-id="${CSS.escape(turn_id)}"] .trace-rows`);
   for (const step of steps) rows?.append(activityStep(step));
@@ -2266,7 +2254,10 @@ async function shoppingRefresh() {
   } catch (err) {
     if (generation === shop.generation) {
       shopEl.cartStatus.textContent = `Cart unavailable: ${pharmacyError(err)}`;
-      if (!shop.cart) shopEl.cartItems.textContent = 'Your cart could not be loaded. No items have been changed.';
+      if (!shop.cart) {
+        shopEl.cartItems.textContent = 'Your cart could not be loaded. No items have been changed.';
+        if (typeof memoryCartRender === 'function') memoryCartRender(null, {failed: pharmacyError(err)});
+      }
       if (shop.lastLoadError !== err.message) {
         shoppingNotice(`I couldn't refresh your cart. ${pharmacyError(err)}`);
         shop.lastLoadError = err.message;

@@ -14,17 +14,28 @@ jsDelivr.
 
 | Where | `apiBaseUrl` | Result |
 |---|---|---|
-| local development | `''` (as committed) | the address saved under **Server settings** on the sign-in page, else `http://<this host>:8010` |
+| production (Vercel) | `'https://13-205-123-198.sslip.io'` (as committed) | the production backend |
+| local development (`dev/serve.py`) | `''` - answered by `dev/serve.py`, the committed file is not changed | the address saved under **Server settings** on the sign-in page, else `http://<this host>:8010` (the local backend) |
+
+`dev/serve.py --api-base <url>` points a local page at another backend;
+`--api-base committed` serves the committed `config.js` (the production
+backend) - only when that is really what you want to test.
 
 Only public values belong in `config.js` - every browser downloads it.
 
 ## Local development
 
-Start the backend (Siru-ai-service) on port 8010, then from this folder:
+Start the backend (Siru-ai-service) on port 8010 - from the backend
+checkout, `scripts\dev-start.cmd --loopback-db --only api` (and
+`scripts\dev-start.cmd --loopback-db --only voice` for the voice worker) -
+then from this folder:
 
 ```bash
 python dev/serve.py --port 5500
 ```
+
+The page then calls the local backend (`dev/serve.py` answers `/config.js`
+with it; see above).
 
 Open <http://localhost:5500>. `--bind 0.0.0.0` serves it to the LAN (add the
 page's origin to the backend's `CORS_ALLOW_ORIGINS`). `dev/serve.py` is a

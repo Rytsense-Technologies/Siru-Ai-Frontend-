@@ -7,12 +7,20 @@ picked up on a normal reload - nobody needs a hard refresh.
 
 Dotfiles (.git, .env*) and dev/ itself are never served - the repository
 root is the site root, and it may be opened to the LAN.
+
+/config.js: the committed one names the production backend (what Vercel
+serves). Locally this server answers it with the local backend instead -
+apiBaseUrl '' = the "Server settings" address, else http://<this host>:8010
+(app.js) - unless --api-base names another (a URL), or `--api-base committed`
+serves the committed file as it is. The committed file is never changed.
 """
 from __future__ import annotations
 
 import argparse
 import functools
 import http.server
+import io
+import json
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -38,11 +46,29 @@ def is_private(url_path: str) -> bool:
     return any(p.startswith(".") for p in parts) or (bool(parts) and parts[0] in _PRIVATE_DIRS)
 
 
+def local_config(api_base: str) -> bytes:
+    """The config.js this server answers with: the committed one's shape, the
+    backend given here (no secret - every browser downloads it)."""
+    return ("// Served by dev/serve.py for local development - not the committed config.js\n"
+            "// (which names the production backend). apiBaseUrl '' = the \"Server settings\"\n"
+            "// address, else http://<this host>:8010 - the local API (app.js).\n"
+            f"window.SIRU_CONFIG = Object.freeze({{\n  apiBaseUrl: {json.dumps(api_base)},\n}});\n").encode("utf-8")
+
+
 class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
+    # The local config.js body, or None to serve the committed file (main sets it).
+    config_js: bytes | None = None
+
     def send_head(self):
         if is_private(self.path):
             self.send_error(404, "File not found")
             return None
+        if self.config_js is not None and unquote(urlsplit(self.path).path) == "/config.js":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/javascript; charset=utf-8")
+            self.send_header("Content-Length", str(len(self.config_js)))
+            self.end_headers()
+            return io.BytesIO(self.config_js)
         return super().send_head()
 
     def end_headers(self) -> None:
@@ -67,10 +93,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--bind", default="127.0.0.1", help="address to listen on (0.0.0.0 = the LAN too)")
     parser.add_argument("--port", type=int, default=5500)
+    parser.add_argument("--api-base", default="",
+                        help="the backend the page calls: '' (default) = the local API (http://<this host>:8010), "
+                             "a URL, or 'committed' to serve config.js as committed (the production backend)")
     args = parser.parse_args()
+    if args.api_base != "committed":
+        if args.api_base and not args.api_base.startswith(("http://", "https://")):
+            parser.error("--api-base must be '', an http(s):// URL or 'committed'")
+        NoCacheHandler.config_js = local_config(args.api_base.rstrip("/"))
     handler = functools.partial(NoCacheHandler, directory=str(FRONTEND))
     with Server((args.bind, args.port), handler) as server:
-        print(f"Serving {FRONTEND} on http://{args.bind}:{args.port} (Cache-Control: no-cache)")
+        backend = ("config.js as committed" if args.api_base == "committed"
+                   else args.api_base or "the local API (http://<this host>:8010)")
+        print(f"Serving {FRONTEND} on http://{args.bind}:{args.port} (Cache-Control: no-cache) - backend: {backend}")
         server.serve_forever()
 
 

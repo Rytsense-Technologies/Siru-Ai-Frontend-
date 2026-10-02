@@ -187,9 +187,14 @@ const buyerVoiceSurface = {
     await shoppingEnsureConnected();
     await shoppingSelectionReady();
   },
-  // chat_session_id: the session the typed chat is in, so a spoken turn and a
-  // typed one belong to one conversation (worker: conversation_id).
-  sessionQuery: () => (shoppingSessionId ? `&chat_session_id=${encodeURIComponent(shoppingSessionId)}` : ''),
+  // chat_session_id: the conversation the typed chat is in - created now if
+  // the user speaks before typing - so spoken and typed turns belong to one
+  // conversation (worker: conversation_id), and every mic session of it shares
+  // one greeting and one pharmacy choice (worker: the greeting claim).
+  sessionQuery: () => {
+    const conversation = shoppingEnsureSession();
+    return conversation ? `&chat_session_id=${encodeURIComponent(conversation)}` : '';
+  },
   body() {
     // The location verified once at sign-in (location.js) goes with the
     // session - in the body, never the URL - for spoken "nearest pharmacy" answers.

@@ -8,7 +8,8 @@
 const memoryEl = Object.fromEntries([
   "memoryList", "memoryEmpty", "memoryCount", "memoryCountTop", "memoryStatus",
   "memoryConsent", "memoryConsentNote", "stmBadge", "stmSummary", "stmRecent", "memoryCart", "memoryOrders",
-  "memoryForgetAll",
+  "memoryForgetAll", "householdCount", "householdStatus", "householdEmpty", "householdList", "householdAddBox",
+  "householdForm", "householdRelationship", "householdLabel", "householdAge", "householdNote",
 ].map(id => [id, document.getElementById(id)]));
 
 const MEMORY_LABELS = {
@@ -20,6 +21,10 @@ const MEMORY_LABELS = {
 const MEMORY_DELAY_MS = 3000;
 let memoryLoading = null;
 let memoryDelayTimer = null;
+// Whose memory the list on screen is, as the server last answered it (null:
+// nobody's yet). A failed load never shows "0 remembered" for a list that was
+// never loaded - nor keeps another user's list.
+let memoryShownFor = null;
 
 function memoryWhen(item) {
   const created = new Date(item.created_at);
@@ -148,10 +153,16 @@ function stateItemRow({name, qty, pricePaise, image}) {
   return row;
 }
 
-// The cart as it is now; `cart` is shopping.js's normalised cart (null: not loaded yet).
-function memoryCartRender(cart) {
+// The cart as it is now; `cart` is shopping.js's normalised cart (null: not
+// loaded yet). `failed`: the load failed and no cart was loaded - said, not
+// left "loading" (shopping.js shoppingRefresh).
+function memoryCartRender(cart, {failed = ''} = {}) {
   const box = memoryEl.memoryCart;
   if (!box) return;
+  if (getUserId() && !cart && failed) {
+    box.replaceChildren(el_('p', 'muted small', `Couldn't load your cart just now. ${failed}`));
+    return;
+  }
   if (!getUserId() || !cart) {
     box.replaceChildren(el_('p', 'muted small', getUserId() ? 'Loading the cart…' : 'Sign in to see your cart.'));
     return;
@@ -202,6 +213,11 @@ function orderWhen(value) {
 async function memoryOrdersRefresh(userId) {
   const box = memoryEl.memoryOrders;
   if (!box) return;
+  // Another user's orders never stay on screen while this user's load.
+  if (box.dataset.owner !== userId) {
+    box.dataset.owner = userId;
+    box.replaceChildren(el_('p', 'muted small', 'Loading orders…'));
+  }
   const [siru, demo] = await Promise.allSettled([pharmacyApi.orders(), apiFetch('/v1/actions/demo')]);
   if (getUserId() !== userId) return;
   const cards = [];
@@ -217,7 +233,10 @@ async function memoryOrdersRefresh(userId) {
   cards.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
   const shown = cards.slice(0, 5).map(c => c.card);
   const notes = [];
+  // Each source's failure is said: "No orders yet." only when both answered.
   if (siru.status === 'rejected' && demo.status === 'rejected') notes.push("Couldn't load your orders just now.");
+  else if (siru.status === 'rejected') notes.push("Couldn't load your SIRU orders just now - only orders confirmed in this app are shown.");
+  else if (demo.status === 'rejected') notes.push("Couldn't load the orders confirmed in this app just now.");
   if (!cards.length && !notes.length) notes.push('No orders yet.');
   if (cards.length > shown.length) notes.push(`${cards.length - shown.length} older order(s) in My orders.`);
   const bookings = demo.status === 'fulfilled' ? (demo.value.bookings || []).length : 0;
@@ -226,10 +245,23 @@ async function memoryOrdersRefresh(userId) {
 }
 
 // Reads the user's memory into the tab. `delayed` waits for a turn's
-// background save first. Best effort: a failure leaves what is on screen.
+// background save first. Best effort: a failure leaves this user's list as
+// last loaded; with none loaded yet the count is unknown ("–"), not 0.
 function memoryRefresh({delayed = false} = {}) {
   clearTimeout(memoryDelayTimer);
-  if (!getUserId()) { memoryRender([]); memoryEl.memoryStatus.textContent = 'Sign in to see what Siru remembers.'; return; }
+  if (!getUserId()) {
+    // Signed out: nothing of the previous user stays in the tab.
+    memoryRender([]);
+    memoryShownFor = null;
+    memoryEl.memoryStatus.textContent = 'Sign in to see what Siru remembers.';
+    memoryCartRender(null);
+    memoryEl.memoryOrders.replaceChildren();
+    delete memoryEl.memoryOrders.dataset.owner;
+    memoryEl.stmRecent.replaceChildren();
+    memoryEl.stmSummary.textContent = 'No conversation yet.';
+    if (typeof householdReset === 'function') householdReset();
+    return;
+  }
   if (delayed) { memoryDelayTimer = setTimeout(() => memoryRefresh(), MEMORY_DELAY_MS); return; }
   if (memoryLoading) return memoryLoading;
   const userId = getUserId();
@@ -237,17 +269,27 @@ function memoryRefresh({delayed = false} = {}) {
   memoryShortTermRefresh(userId);
   memoryCartRender(typeof shop === 'object' ? shop.cart : null);
   memoryOrdersRefresh(userId);
+  householdRefresh(userId);
   memoryLoading = pharmacyApi.memory()
     .then(data => {
       if (getUserId() !== userId) return;
       memoryRender(Array.isArray(data.items) ? data.items : []);
+      memoryShownFor = userId;
       memoryConsentShow(data.memory_enabled !== false);
       memoryEl.memoryStatus.textContent = '';
     })
     .catch(error => {
       if (getUserId() !== userId) return;
+      if (memoryShownFor !== userId) {
+        // Not loaded is not "nothing remembered" (e.g. the server's app
+        // database is unreachable): no count, no empty state.
+        memoryEl.memoryList.replaceChildren();
+        memoryEl.memoryCount.textContent = '–';
+        memoryEl.memoryCountTop.textContent = '–';
+        memoryEl.memoryEmpty.hidden = true;
+      }
       memoryEl.memoryStatus.textContent = error.status === 404
-        ? 'Memory needs a newer pharmacy API.' : "Couldn't load memory just now.";
+        ? 'Memory needs a newer pharmacy API.' : `Couldn't load memory just now. ${pharmacyError(error)}`;
     })
     .finally(() => { memoryLoading = null; });
   return memoryLoading;
@@ -298,5 +340,113 @@ memoryEl.memoryForgetAll.onclick = async () => {
     memoryEl.memoryStatus.textContent = `Couldn't forget just now: ${pharmacyError(error)}`;
   } finally {
     memoryEl.memoryForgetAll.disabled = false;
+  }
+};
+
+// ---------- household profiles (GET/POST/PATCH/DELETE /v1/household/me) ----------
+//
+// The people this user shops for, exactly as they entered them - never
+// inferred from a conversation, never a medicine or dose. Only the signed-in
+// user's own (the server takes the user from the login). Loading, empty and
+// failed are three different states; another user's profiles never stay.
+const HOUSEHOLD_LABELS = {mother: 'Mother', father: 'Father', spouse: 'Spouse', son: 'Son', daughter: 'Daughter',
+  child: 'Child', sibling: 'Sibling', grandparent: 'Grandparent', grandchild: 'Grandchild', other: 'Other'};
+let householdShownFor = null;
+
+function householdReset() {
+  householdShownFor = null;
+  memoryEl.householdList.replaceChildren();
+  memoryEl.householdCount.textContent = '0';
+  memoryEl.householdEmpty.hidden = true;
+  memoryEl.householdStatus.textContent = '';
+}
+
+function householdItem(member) {
+  const row = el_('article', 'memory-item household-item');
+  const head = el_('div', 'memory-head');
+  head.append(el_('p', 'memory-text', member.label));
+  const remove = el_('button', 'icon-btn memory-forget');
+  remove.append(icon('trash'));
+  remove.type = 'button';
+  remove.title = 'Delete this profile';
+  remove.setAttribute('aria-label', `Delete the profile: ${member.label}`);
+  remove.onclick = () => householdDelete(member, row, remove);
+  head.append(remove);
+  row.append(head);
+  const meta = el_('div', 'memory-meta');
+  meta.append(el_('span', 'memory-tag other', HOUSEHOLD_LABELS[member.relationship] || 'Other'));
+  if (member.age_years != null) meta.append(el_('span', '', `Age ${member.age_years}`));
+  meta.append(el_('span', '', 'Entered by you'));
+  row.append(meta);
+  if (member.note) row.append(el_('p', 'muted small household-note', member.note));
+  return row;
+}
+
+function householdRender(members) {
+  memoryEl.householdList.replaceChildren(...members.map(householdItem));
+  memoryEl.householdCount.textContent = members.length;
+  memoryEl.householdEmpty.hidden = members.length > 0;
+}
+
+async function householdRefresh(userId = getUserId()) {
+  if (!userId) { householdReset(); return; }
+  if (householdShownFor !== userId) {
+    householdReset();
+    memoryEl.householdStatus.textContent = 'Loading…';
+  }
+  try {
+    const data = await apiFetch('/v1/household/me');
+    if (getUserId() !== userId) return;
+    householdShownFor = userId;
+    householdRender(Array.isArray(data.members) ? data.members : []);
+    memoryEl.householdStatus.textContent = '';
+  } catch (error) {
+    if (getUserId() !== userId) return;
+    if (householdShownFor !== userId) {
+      // Not loaded is not "no profiles": no count, no empty state.
+      memoryEl.householdList.replaceChildren();
+      memoryEl.householdCount.textContent = '–';
+      memoryEl.householdEmpty.hidden = true;
+    }
+    memoryEl.householdStatus.textContent = `Couldn't load household profiles just now. ${pharmacyError(error)}`;
+  }
+}
+
+async function householdDelete(member, row, button) {
+  if (!window.confirm(`Delete the profile "${member.label}"? This can't be undone.`)) return;
+  button.disabled = true;
+  try {
+    await apiFetch(`/v1/household/me/${encodeURIComponent(member.id)}`, {method: 'DELETE'});
+    row.remove();
+    const count = memoryEl.householdList.children.length;
+    memoryEl.householdCount.textContent = count;
+    memoryEl.householdEmpty.hidden = count > 0;
+    memoryEl.householdStatus.textContent = '';
+  } catch (error) {
+    button.disabled = false;
+    memoryEl.householdStatus.textContent = `Couldn't delete that just now. ${pharmacyError(error)}`;
+  }
+}
+
+memoryEl.householdForm.onsubmit = async event => {
+  event.preventDefault();
+  const userId = getUserId();
+  if (!userId) return;
+  const age = memoryEl.householdAge.value.trim();
+  const body = {relationship: memoryEl.householdRelationship.value, label: memoryEl.householdLabel.value.trim(),
+    note: memoryEl.householdNote.value.trim(), ...(age === '' ? {} : {age_years: Number(age)})};
+  const submit = memoryEl.householdForm.querySelector('[type="submit"]');
+  submit.disabled = true;
+  try {
+    await apiFetch('/v1/household/me', {method: 'POST', body: JSON.stringify(body)});
+    if (getUserId() !== userId) return;
+    memoryEl.householdForm.reset();
+    memoryEl.householdAddBox.open = false;
+    await householdRefresh(userId);
+  } catch (error) {
+    // Saved only when the server says so.
+    memoryEl.householdStatus.textContent = `Couldn't save that profile. ${pharmacyError(error)}`;
+  } finally {
+    submit.disabled = false;
   }
 };

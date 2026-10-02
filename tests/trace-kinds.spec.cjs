@@ -49,8 +49,8 @@ test('transcript, location and confirmation steps are drawn as themselves, not a
   expect(rows.filter(r => r.startsWith('TOOL '))).toEqual(['TOOL search_products', 'TOOL find_nearby_pharmacies']);
 });
 
-test('the AI layer view of the turn includes them', async ({ page }) => {
-  const ai = await page.evaluate(() => { panelShow('ai'); return shopEl.turnAi.textContent; });
+test("the turn's Tool calls card includes them", async ({ page }) => {
+  const ai = await page.evaluate(() => { panelShow('tools'); return shopEl.activityList.querySelector(`[data-turn-id="${turnId}"]`).textContent; });
   expect(ai).toContain('user_location');
   expect(ai).toContain('20 of 20 stores located');
   expect(ai).toContain('selection_failed');

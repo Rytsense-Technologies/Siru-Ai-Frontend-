@@ -118,7 +118,8 @@
     <div class="panel-head chat-heading">
       <div><span class="eyebrow">CONVERSATION</span><h2>Siru</h2></div>
       <div class="chat-heading-side">
-
+        <!-- A new conversation without signing out (shopping.js shoppingNewChat). -->
+        <button id="newChatBtn" type="button" class="activity-btn" title="Start a new conversation"><span class="icon" data-icon="plus"></span><span>New chat</span></button>
         <button id="activityBtn" type="button" class="activity-btn" aria-controls="toolsTab"><span class="icon" data-icon="activity"></span><span>Tool calls</span> <b id="activityCountTop">0</b></button>
         <button id="memoryBtn" type="button" class="activity-btn" aria-controls="memoryTab"><span class="icon" data-icon="memory"></span><span>Memory</span> <b id="memoryCountTop">0</b></button>
         <span id="chatStatus" class="chat-status" role="status" aria-live="polite">Ready</span>
@@ -163,10 +164,10 @@
     </div>
     <!-- This conversation's real turns (their SSE trace), summed up. -->
     <div class="inspector-stats" aria-label="This conversation">
-      <button type="button" class="stat" data-tab="tools"><small>Tool calls</small><strong id="statTools">0</strong><span>tool calls</span><em id="statToolsSplit"></em></button>
-      <button type="button" class="stat" data-tab="data"><small>Data</small><strong id="statTables">0</strong><span>tables touched</span><em><b id="statWrites">0</b> table writes</em></button>
-      <button type="button" class="stat" data-tab="memory"><small>Memory</small><strong id="statMemory">0</strong><span>memory steps</span></button>
-      <button type="button" class="stat" data-tab="ai"><small>AI layer</small><strong id="statModel">0</strong><span>model calls</span><em id="statTokens"></em></button>
+      <div class="stat"><strong id="statTools">0</strong><span>tool calls</span><em id="statToolsSplit"></em></div>
+      <div class="stat"><strong id="statTables">0</strong><span>tables touched</span></div>
+      <div class="stat"><strong id="statWrites">0</strong><span>table writes</span></div>
+      <div class="stat"><strong id="statModel">0</strong><span>model calls</span><em id="statTokens"></em></div>
     </div>
     <p class="inspector-legend"><span class="plane plane-core">Core API</span> existing platform tools and tables
       <span class="plane plane-ai">AI service</span> siru-ai-service, its own data</p>
@@ -174,21 +175,21 @@
       <button id="toolsTabBtn" class="panel-tab" role="tab" type="button" aria-selected="true" aria-controls="toolsTab">Tool calls <b id="activityCount">0</b></button>
       <button id="dataTabBtn" class="panel-tab" role="tab" type="button" aria-selected="false" aria-controls="dataTab">Data <b id="dataCount">0</b></button>
       <button id="memoryTabBtn" class="panel-tab" role="tab" type="button" aria-selected="false" aria-controls="memoryTab">Memory <b id="memoryCount">0</b></button>
-      <button id="aiTabBtn" class="panel-tab" role="tab" type="button" aria-selected="false" aria-controls="aiTab">AI layer <b id="aiCount">0</b></button>
     </div>
-    <!-- The turn the Data / Memory / AI layer views are about (shopping.js inspectorSelect):
-         the latest by default; a chat turn or a Tool calls card selects another. -->
-    <div id="inspectorTurn" class="inspector-turn" aria-live="polite"></div>
 
     <section id="toolsTab" role="tabpanel" aria-labelledby="toolsTabBtn">
       <p id="activityIgnored" class="noise-note" role="status" hidden></p>
+      <!-- Guardrails: the safety and policy checks this conversation's turns
+           reported (trace steps of kind "guard") - decisions, never reasoning. -->
+      <details id="guardrails" class="guardrails" hidden>
+        <summary><span class="guardrails-title">Guardrails</span> <b id="guardCount">0</b> <span id="guardBlocked" class="guardrails-blocked"></span></summary>
+        <ol id="guardList" class="guard-list"></ol>
+      </details>
       <p id="activityEmpty" class="muted small">No tool calls yet in this conversation.</p>
       <div id="activityList" class="activity-list"></div>
     </section>
 
     <section id="dataTab" role="tabpanel" aria-labelledby="dataTabBtn" hidden>
-      <div id="turnData" class="turn-section"></div>
-      <h3 class="inspector-subhead">Whole conversation</h3>
       <p class="muted small">Every table this conversation's tools read (R) or wrote (W), as the server reported it.</p>
       <p id="dataEmpty" class="muted small">No tables touched yet.</p>
       <div id="dataList" class="data-list"></div>
@@ -196,16 +197,43 @@
     </section>
 
     <section id="memoryTab" role="tabpanel" aria-labelledby="memoryTabBtn" hidden>
-      <div id="turnMemory" class="turn-section"></div>
-      <h3 class="inspector-subhead">What Siru keeps</h3>
-      <!-- Short-term: this conversation's recent turns in Redis (GET /v1/memory/me/short-term). -->
+      <!-- 1. Personal memory: facts kept in the app database, across every session. -->
+      <div class="memory-section-head memory-facts-head"><h3>Personal memory</h3><span class="memory-badge memory-badge-db">App database</span></div>
+      <p class="muted small memory-facts-note">Facts Siru keeps about you - never your old messages. Short-term expiry never removes these.</p>
+      <label class="consent-row"><input id="memoryConsent" type="checkbox" checked>
+        <span><strong>Remember things about me</strong><small id="memoryConsentNote" class="muted">New facts are saved. Turning this off keeps what is already here.</small></span></label>
+      <p id="memoryStatus" class="muted small" role="status"></p>
+      <p id="memoryEmpty" class="muted small">Nothing remembered yet.</p>
+      <div id="memoryList" class="memory-list"></div>
+
+      <!-- 2. Household: the people this user shops for, as they entered them
+           (GET/POST/PATCH/DELETE /v1/household/me - memory.js). -->
       <div class="memory-section">
-        <div class="memory-section-head"><h3>Short-term</h3><span id="stmBadge" class="memory-badge">Not active</span></div>
-        <p class="muted small">This conversation's recent messages, in Redis. Expires 24 hours after your last message.</p>
-        <p id="stmSummary" class="memory-summary muted small">No conversation yet.</p>
-        <ol id="stmRecent" class="stm-recent"></ol>
+        <div class="memory-section-head"><h3>Household <b id="householdCount" class="memory-count">0</b></h3><span class="memory-badge memory-badge-db">App database</span></div>
+        <p class="muted small">People you shop for - only what you enter here. No medicines or doses are kept.</p>
+        <p id="householdStatus" class="muted small" role="status"></p>
+        <p id="householdEmpty" class="muted small" hidden>No household profiles yet.</p>
+        <div id="householdList" class="memory-list"></div>
+        <details id="householdAddBox" class="household-add">
+          <summary>Add a person</summary>
+          <form id="householdForm" class="household-form">
+            <label>Relationship
+              <select id="householdRelationship" required>
+                <option value="mother">Mother</option><option value="father">Father</option>
+                <option value="spouse">Spouse</option><option value="son">Son</option>
+                <option value="daughter">Daughter</option><option value="child">Child</option>
+                <option value="sibling">Sibling</option><option value="grandparent">Grandparent</option>
+                <option value="grandchild">Grandchild</option><option value="other">Other</option>
+              </select></label>
+            <label>Name or label <input id="householdLabel" type="text" maxlength="60" required></label>
+            <label>Age <small class="muted">(optional)</small> <input id="householdAge" type="number" min="0" max="120" inputmode="numeric"></label>
+            <label>Note <small class="muted">(optional - e.g. prefers syrups)</small> <input id="householdNote" type="text" maxlength="200"></label>
+            <button type="submit" class="secondary-btn">Save</button>
+          </form>
+        </details>
       </div>
-      <!-- Shopping state, not memory: the cart as it is now and the order
+
+      <!-- 3-4. Shopping state, not memory: the cart as it is now and the order
            history, each from its own source (memory.js) - shown here as cards. -->
       <div class="memory-section">
         <div class="memory-section-head"><h3>Cart</h3><span class="memory-badge memory-badge-db">Current state</span></div>
@@ -215,21 +243,16 @@
         <div class="memory-section-head"><h3>Orders</h3><span class="memory-badge memory-badge-db">History</span></div>
         <div id="memoryOrders" class="state-cards"></div>
       </div>
-      <!-- Personal memory: facts kept in the app database, across every session. -->
-      <div class="memory-section-head memory-facts-head"><h3>Personal memory</h3><span class="memory-badge memory-badge-db">App database</span></div>
-      <p class="muted small memory-facts-note">Facts Siru keeps about you - never your old messages. Short-term expiry never removes these.</p>
-      <label class="consent-row"><input id="memoryConsent" type="checkbox" checked>
-        <span><strong>Remember things about me</strong><small id="memoryConsentNote" class="muted">New facts are saved. Turning this off keeps what is already here.</small></span></label>
-      <p id="memoryStatus" class="muted small" role="status"></p>
-      <p id="memoryEmpty" class="muted small">Nothing remembered yet.</p>
-      <div id="memoryList" class="memory-list"></div>
-      <!-- DELETE /v1/memory/me: every fact, topic, check-in, conversation memory and checkpoint -->
-      <button id="memoryForgetAll" type="button" class="link-btn memory-forget-all">Forget everything Siru remembers about me</button>
-    </section>
 
-    <!-- The selected turn's routing, agent, model calls, guards and checkpoint, as traced. -->
-    <section id="aiTab" role="tabpanel" aria-labelledby="aiTabBtn" hidden>
-      <div id="turnAi" class="turn-section"></div>
+      <!-- Short-term: this conversation's recent turns in Redis (GET /v1/memory/me/short-term). -->
+      <div class="memory-section">
+        <div class="memory-section-head"><h3>Short-term</h3><span id="stmBadge" class="memory-badge">Not active</span></div>
+        <p class="muted small">This conversation's recent messages, in Redis. Expires 24 hours after your last message.</p>
+        <p id="stmSummary" class="memory-summary muted small">No conversation yet.</p>
+        <ol id="stmRecent" class="stm-recent"></ol>
+      </div>
+      <!-- DELETE /v1/memory/me: every fact, household profile, topic, check-in, conversation memory and checkpoint -->
+      <button id="memoryForgetAll" type="button" class="link-btn memory-forget-all">Forget everything Siru remembers about me</button>
     </section>
   </aside>
 

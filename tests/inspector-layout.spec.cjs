@@ -1,6 +1,8 @@
-// The inspector is half the screen beside the chat, each scrolling on its own,
-// and its Tool calls / Data / Memory / AI layer views follow the selected turn
-// - showing only what that turn's trace reported (shopping.js inspectorSelect).
+// The inspector is the compact sidebar beside the chat ("What Siru did"): the
+// conversation's request count, four summary cards, the Core API / AI service
+// legend and three tabs - Tool calls, Data, Memory. Each Tool calls card shows
+// only what that turn's trace reported; a turn picked in the chat is
+// highlighted and its card opened (shopping.js inspectorSelect).
 const { test, expect } = require('@playwright/test');
 
 // A turn as the server traces it (multi_agent_framework/tracing.py, the SSE io).
@@ -52,75 +54,70 @@ test.beforeEach(async ({ page }) => {
   }, { trace: TRACE, greeting: GREETING });
 });
 
-test('chat and inspector split the desktop in half', async ({ page }) => {
-  const widths = await page.evaluate(() => [document.querySelector('.card.chat-card'), shopEl.activityPanel]
-    .map(node => node.getBoundingClientRect().width));
-  expect(Math.abs(widths[0] - widths[1])).toBeLessThan(2);
-  expect(widths[1]).toBeGreaterThan(600);
-});
-
-test('the latest turn is selected, with empty states for what it did not do', async ({ page }) => {
+test('the compact sidebar: heading, request count, four cards, the legend and three tabs', async ({ page }) => {
   const view = await page.evaluate(() => ({
-    bar: shopEl.inspectorTurn.textContent, data: shopEl.turnData.textContent,
-    memory: shopEl.turnMemory.textContent, ai: shopEl.turnAi.textContent,
-    noTools: shopEl.activityList.querySelector(`[data-turn-id="${turnIds[1]}"]`).textContent,
+    title: document.getElementById('activityTitle').textContent, sub: shopEl.inspectorSub.textContent,
+    cards: [...document.querySelectorAll('.inspector-stats .stat span')].map(n => n.textContent),
+    values: [...document.querySelectorAll('.inspector-stats .stat strong')].map(n => n.textContent),
+    columns: getComputedStyle(document.querySelector('.inspector-stats')).gridTemplateColumns.split(' ').length,
+    legend: document.querySelector('.inspector-legend').textContent,
+    tabs: [...document.querySelectorAll('.inspector .panel-tab')].map(n => n.textContent.replace(/\s*(\d+|–)$/, '').trim()),
+    width: shopEl.activityPanel.getBoundingClientRect().width,
+    chat: document.querySelector('.card.chat-card').getBoundingClientRect().width,
+    dataRows: shopEl.dataList.querySelectorAll('.data-row').length,
+    writtenRows: shopEl.dataList.querySelectorAll('.data-row.written').length,
   }));
-  expect(view.bar).toContain('Turn 2 of 2');
-  expect(view.bar).toContain('“hi”');
-  expect(view.data).toContain('No data read or written in this turn.');
-  expect(view.memory).toContain('No memory read or written in this turn.');
-  expect(view.ai).toContain('Fast path');
-  expect(view.noTools).toContain('No tool calls for this turn.');
+  expect(view.title).toBe('What Siru did');
+  expect(view.sub).toContain('2 requests');
+  expect(view.cards).toEqual(['tool calls', 'tables touched', 'table writes', 'model calls']);
+  // From the traces only: 2 tool calls, 1 model call; tables and writes are the Data tab's own rows.
+  expect(view.values[0]).toBe('2');
+  expect(view.values[1]).toBe(String(view.dataRows));
+  expect(view.values[2]).toBe(String(view.writtenRows));
+  expect(view.writtenRows).toBeGreaterThan(0);
+  expect(view.values[3]).toBe('1');
+  expect(view.columns).toBe(2);
+  expect(view.legend).toContain('Core API');
+  expect(view.legend).toContain('AI service');
+  expect(view.tabs).toEqual(['Tool calls', 'Data', 'Memory']);
+  // A sidebar, not half the screen.
+  expect(view.width).toBeLessThan(400);
+  expect(view.chat).toBeGreaterThan(view.width * 2);
 });
 
-test("selecting a chat turn shows that turn's tools, data, memory and AI layer", async ({ page }) => {
+test('no memory-steps counter and no AI layer tab: counts are what the cards and tabs say they are', async ({ page }) => {
+  const view = await page.evaluate(() => ({
+    statMemory: !!document.getElementById('statMemory'), aiTab: !!document.getElementById('aiTab'),
+    turnBar: !!document.getElementById('inspectorTurn'),
+  }));
+  expect(view).toEqual({statMemory: false, aiTab: false, turnBar: false});
+});
+
+test("selecting a chat turn opens that turn's card, with every step it reported", async ({ page }) => {
   await page.locator(`.chat-turn[data-turn-id]`).first().locator('.chat-bubble.user').click();
   const view = await page.evaluate(() => {
     const card = shopEl.activityList.querySelector(`[data-turn-id="${turnIds[0]}"]`);
     return {
-      bar: shopEl.inspectorTurn.textContent,
       cardOpen: card.open, cardSelected: card.classList.contains('selected'),
+      chatSelected: document.querySelector(`.chat-turn[data-turn-id="${turnIds[0]}"]`).classList.contains('inspected'),
       labels: [...card.querySelectorAll('.trace-row .trace-label')].map(n => n.textContent),
       tools: [...card.querySelectorAll('.trace-row')].filter(r => r.querySelector('.trace-label').textContent === 'TOOL')
         .map(r => r.querySelector('.trace-name').textContent),
       toolDetail: card.querySelector('.trace-row:nth-child(4) .trace-detail')?.textContent,
-      data: [...shopEl.turnData.querySelectorAll('.data-row')].map(r => r.textContent),
-      memory: shopEl.turnMemory.textContent,
-      ai: [...shopEl.turnAi.querySelectorAll('.trace-label')].map(n => n.textContent),
+      greetingCard: shopEl.activityList.querySelector(`[data-turn-id="${turnIds[1]}"]`).textContent,
+      data: (panelShow('data'), [...shopEl.dataList.querySelectorAll('.data-row')].map(r => r.textContent)),
     };
   });
-  expect(view.bar).toContain('Turn 1 of 2');
   expect(view.cardOpen).toBe(true);
   expect(view.cardSelected).toBe(true);
+  expect(view.chatSelected).toBe(true);
   // The lifecycle in order: route, agent, model, the tools chronologically, memory, the reply.
   expect(view.labels).toEqual(['ROUTE', 'AGENT', 'MODEL', 'TOOL', 'TOOL', 'MEMORY', 'OUT']);
   expect(view.tools).toEqual(['search_products', 'add_to_cart']);
   expect(view.toolDetail).toContain('in commerce_agent');
+  expect(view.greetingCard).toContain('No tool calls for this turn.');
   expect(view.data.find(r => r.startsWith('cart_items'))).toContain('W 1');
   expect(view.data.find(r => r.startsWith('catalog_items'))).toContain('R 1');
-  expect(view.memory).toContain('short-term saved');
-  expect(view.ai).toEqual(['ROUTE', 'AGENT', 'MODEL']);
-});
-
-test('the chat and the inspector scroll independently', async ({ page }) => {
-  const result = await page.evaluate(async ({ greeting }) => {
-    for (let i = 0; i < 10; i++) {
-      const id = crypto.randomUUID();
-      shoppingTurn(id, {userText: `question ${i}`, source: 'text'});
-      await shoppingTurnFinish(id, {status: 'answered', reply: `answer ${i}`, trace: structuredClone(greeting)});
-    }
-    const chat = shopEl.chatMessages, tools = shopEl.toolsTab;
-    chat.scrollTop = 0; tools.scrollTop = 0;
-    tools.scrollTop = 300;
-    const chatAfterInspector = chat.scrollTop;
-    chat.scrollTop = 200;
-    return {overflow: chat.scrollHeight > chat.clientHeight && tools.scrollHeight > tools.clientHeight,
-      chatAfterInspector, inspectorAfterChat: tools.scrollTop, page: scrollY};
-  }, { greeting: GREETING });
-  expect(result.overflow).toBe(true);
-  expect(result.chatAfterInspector).toBe(0);
-  expect(result.inspectorAfterChat).toBe(300);
-  expect(result.page).toBe(0);
 });
 
 test('on a phone the inspector is a drawer: closed until asked, closed by its X', async ({ page }) => {
@@ -138,7 +135,7 @@ test('on a phone the inspector is a drawer: closed until asked, closed by its X'
     shoppingTurn(id, {userText: 'phone question', source: 'text'});
     await shoppingTurnFinish(id, {status: 'answered', reply: 'phone answer', trace: structuredClone(greeting)});
   }, { greeting: GREETING });
-  expect(await page.evaluate(() => shopEl.inspectorTurn.textContent)).toContain('“phone question”');
+  expect(await page.evaluate(() => shopEl.activityList.textContent)).toContain('“phone question”');
   await page.waitForTimeout(400);  // the drawer's transition, had it opened
   expect(await offscreen()).toBe(true);
 });
