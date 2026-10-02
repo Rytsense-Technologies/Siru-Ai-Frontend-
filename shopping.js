@@ -33,7 +33,9 @@ const shopEl = Object.fromEntries([
   "activityClose", "liveTranscript", "toolsTab", "memoryTab", "toolsTabBtn", "memoryTabBtn",
   "activityIgnored", "micFilters", "dataTab", "dataTabBtn", "dataList", "dataEmpty", "dataCount", "dataVoiceNote",
   "inspectorSub", "statTools", "statToolsSplit", "statTables", "statWrites", "statModel", "statTokens",
-  "guardrails", "guardCount", "guardBlocked", "guardList", "newChatBtn",
+  "guardrails", "guardCount", "guardBlocked", "guardList", "newChatBtn", "guardStatus",
+  "aiTab", "aiTabBtn", "aiLayerView", "traceTab", "traceTabBtn", "traceView", "integrationTab", "integrationTabBtn",
+  "integrationView",
   "cartDialog", "cartBtn", "cartBill", "cartDialogNote", "cartConfirm", "cartTotalLabel",
 ].map(id => [id, document.getElementById(id)]));
 const money = paise => paise == null ? 'Price unavailable' : new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(paise / 100);
@@ -1857,6 +1859,8 @@ function inspectorSummary() {
   const cached = reported.reduce((n, item) => n + (item.trace.usage.tokens_cached || 0), 0);
   const unreported = items.reduce((n, item) => n + (item.trace.usage?.tokens_unreported || 0), 0);
   guardrailsRender(items);
+  aiLayerRender(items);
+  traceRender(items);
   shopEl.statTools.textContent = tools.length;
   shopEl.statToolsSplit.textContent = tools.length ? `${direct} direct · ${tools.length - direct} by model` : '';
   shopEl.statTables.textContent = tables.length;
@@ -1930,7 +1934,27 @@ function guardTone(verdict) {
   return verdict === 'pass' || verdict === 'confirmed' ? 'pass' : 'note';
 }
 
+// The guardrail states a reported decision is shown as (never "passed"
+// because a turn merely succeeded): pass, block, note (masked, matched,
+// confirmed...), error (unavailable, failed).
+function guardCounts(items) {
+  const counts = {total: 0, pass: 0, block: 0, note: 0, error: 0};
+  for (const item of items) for (const step of item.trace.steps || []) {
+    if (step.kind !== 'guard') continue;
+    counts.total += 1;
+    counts[guardTone(step.verdict)] += 1;
+  }
+  return counts;
+}
+
 function guardrailsRender(items) {
+  const c = guardCounts(items);
+  shopEl.guardStatus.textContent = !c.total ? 'No guardrail checks reported yet'
+    : [`${c.total} guardrail check${c.total === 1 ? '' : 's'}`, c.pass ? `${c.pass} passed` : '',
+      c.block ? `${c.block} blocked` : '', c.note ? `${c.note} noted` : '', c.error ? `${c.error} unavailable` : '']
+      .filter(Boolean).join(' · ');
+  shopEl.guardStatus.classList.toggle('has-block', c.block > 0);
+  shopEl.guardStatus.classList.toggle('has-error', c.error > 0);
   const rows = [];
   items.forEach((item, index) => {
     for (const step of item.trace.steps || []) {
@@ -2055,9 +2079,10 @@ function shoppingShowTurn(turnId) {
   flash(turn.el);
 }
 
-// The panel has three tabs: the turn-by-turn log, the tables those turns
-// touched, and what Siru remembers.
-const PANEL_TABS = ['tools', 'data', 'memory'];
+// The panel's tabs: the turn-by-turn log, the tables those turns touched,
+// what Siru remembers, how the turns ran (AI layer), each turn's numbers
+// (Trace), and what the page is connected to (Integration).
+const PANEL_TABS = ['tools', 'data', 'memory', 'ai', 'trace', 'integration'];
 
 function panelShow(tab = 'tools', {toggle = false} = {}) {
   const panel = shopEl.activityPanel;
@@ -2070,7 +2095,8 @@ function panelShow(tab = 'tools', {toggle = false} = {}) {
     shopEl[`${name}TabBtn`].setAttribute('aria-selected', String(name === tab));
   }
   if (tab === 'memory') memoryRefresh();
-  if (tab === 'data') inspectorSummary();
+  if (tab === 'data' || tab === 'ai' || tab === 'trace') inspectorSummary();
+  if (tab === 'integration') integrationRender();
   if (!wasOpen) panel.scrollIntoView({block: 'nearest', behavior: 'smooth'});
 }
 
@@ -2079,6 +2105,171 @@ shopEl.toolsTabBtn.onclick = () => panelShow('tools');
 shopEl.dataTabBtn.onclick = () => panelShow('data');
 shopEl.memoryTabBtn.onclick = () => panelShow('memory');
 shopEl.activityClose.onclick = () => shopEl.activityPanel.classList.remove('open');
+shopEl.aiTabBtn.onclick = () => panelShow('ai');
+shopEl.traceTabBtn.onclick = () => panelShow('trace');
+shopEl.integrationTabBtn.onclick = () => panelShow('integration');
+
+// ---------- Inspector: AI layer, Trace, Integration ----------
+//
+// Built only from this conversation's real turns (their traces, as the server
+// streamed them) and, for Integration, a live check of the API - never sample
+// values. A table with no turns says so.
+function inspectorTable(headers, rows, totals = null) {
+  const table = el_('table', 'inspector-table');
+  const head = el_('tr');
+  headers.forEach(h => head.append(el_('th', '', h)));
+  table.append(el_('thead'));
+  table.tHead.append(head);
+  const body = el_('tbody');
+  for (const row of rows) {
+    const tr = el_('tr');
+    row.forEach(cell => tr.append(el_('td', '', cell == null || cell === '' ? '—' : String(cell))));
+    body.append(tr);
+  }
+  if (totals) {
+    const tr = el_('tr', 'total');
+    totals.forEach(cell => tr.append(el_('td', '', cell == null ? '' : String(cell))));
+    body.append(tr);
+  }
+  table.append(body);
+  const wrap = el_('div', 'inspector-table-wrap');
+  wrap.append(table);
+  return wrap;
+}
+
+function sectionHead(title, note = '') {
+  const head = el_('div', 'inspector-section-head');
+  head.append(el_('h3', '', title));
+  if (note) head.append(el_('span', 'muted small', note));
+  return head;
+}
+
+function turnAgent(item) {
+  const agent = String(item.trace.agent || '');
+  return agent.startsWith('direct_tool:') ? 'rules (direct tool)' : agent || 'rules';
+}
+
+function aiLayerRender(items) {
+  const view = shopEl.aiLayerView;
+  view.replaceChildren(sectionHead('How a turn flows', 'this app, as built'));
+  const flows = [
+    ['Chat in the app', 'POST /v1/concierge/turn', 'pre_router', 'care · commerce · booking agent', 'tools (AI service + core API)', 'guardrails', 'SSE back to the app'],
+    ['Mic', 'LiveKit room', 'Sarvam speech-to-text', 'pre_router → agents', 'safety check per sentence', 'Sarvam text-to-speech', 'Speaker'],
+  ];
+  for (const flow of flows) {
+    const line = el_('div', 'flow-line');
+    flow.forEach((part, i) => { if (i) line.append(el_('i', '', '→')); line.append(el_('span', '', part)); });
+    view.append(line);
+  }
+  view.append(sectionHead('Agents', 'turns in this conversation'));
+  const agents = new Map();
+  for (const item of items) agents.set(turnAgent(item), (agents.get(turnAgent(item)) || 0) + 1);
+  view.append(agents.size ? inspectorTable(['agent', 'turns'], [...agents.entries()].sort((a, b) => b[1] - a[1]))
+    : el_('p', 'turn-empty', 'No turns yet in this conversation.'));
+  view.append(sectionHead('Models', 'as each turn reported them'));
+  const models = new Map();
+  for (const item of items) {
+    for (const [model, use] of Object.entries(item.trace.usage?.by_model || {})) {
+      const m = models.get(model) || {calls: 0};
+      m.calls += Number(use?.calls || 0);
+      models.set(model, m);
+    }
+  }
+  view.append(models.size ? inspectorTable(['model', 'calls'], [...models.entries()].map(([name, m]) => [name, m.calls]))
+    : el_('p', 'turn-empty', 'No model calls reported yet.'));
+}
+
+function traceRender(items) {
+  const view = shopEl.traceView;
+  view.replaceChildren(sectionHead('Turns', 'from each turn\'s trace'));
+  if (!items.length) {
+    view.append(el_('p', 'turn-empty', 'No turns yet in this conversation.'));
+    return;
+  }
+  let tin = 0, tout = 0, ms = 0, timed = 0, calls = 0;
+  const rows = items.map((item, index) => {
+    const t = item.trace, usage = t.usage || {};
+    const guards = (t.steps || []).filter(s => s.kind === 'guard');
+    const held = guards.filter(s => guardTone(s.verdict) !== 'error').length;
+    tin += Number(usage.tokens_in || 0); tout += Number(usage.tokens_out || 0); calls += Number(usage.llm_calls ?? t.llm_calls ?? 0);
+    if (t.total_ms != null) { ms += Number(t.total_ms); timed += 1; }
+    const route = (t.steps || []).find(s => s.kind === 'route');
+    return [index + 1, item.source === 'voice' ? 'voice' : 'chat', ROUTE_LABELS[route?.name] || route?.name || t.route || '',
+      turnAgent(item), Object.keys(usage.by_model || {}).join(', '), usage.llm_calls ?? t.llm_calls ?? 0,
+      usage.tokens_in == null ? '' : `${usage.tokens_in} / ${usage.tokens_out ?? 0}`,
+      t.total_ms == null ? '' : activityMs(t.total_ms), guards.length ? `${held}/${guards.length}` : '',
+      t.failed ? 'failed' : 'answered'];
+  });
+  view.append(inspectorTable(['#', 'input', 'route', 'agent', 'model', 'calls', 'tokens in / out', 'latency', 'checks', 'status'],
+    rows, [`${items.length} turns`, '', '', '', '', calls, `${tin} / ${tout}`, timed ? `avg ${activityMs(ms / timed)}` : '', '', '']));
+  view.append(sectionHead('Guardrail checks', 'by rule - decisions the server reported'));
+  const byRule = new Map();
+  for (const item of items) for (const step of item.trace.steps || []) {
+    if (step.kind !== 'guard') continue;
+    const r = byRule.get(step.name) || {pass: 0, block: 0, note: 0, error: 0};
+    r[guardTone(step.verdict)] += 1;
+    byRule.set(step.name, r);
+  }
+  view.append(byRule.size
+    ? inspectorTable(['rule', 'passed', 'blocked', 'noted', 'unavailable'],
+      [...byRule.entries()].map(([name, r]) => [GUARD_LABELS[name] || name, r.pass, r.block, r.note, r.error]))
+    : el_('p', 'turn-empty', 'No guardrail checks reported in this conversation.'));
+}
+
+// Integration: the API this page talks to, checked now - GET /healthz and
+// /readyz (no sign-in, no data) - and the tools and endpoints actually used.
+let integrationChecking = null;
+async function integrationRender() {
+  const view = shopEl.integrationView;
+  view.replaceChildren(sectionHead('Backend API', API_BASE));
+  const status = el_('div', 'integration-checks');
+  status.append(el_('p', 'muted small', 'Checking…'));
+  view.append(status);
+  const items = getUserId() ? userRead(activityKey(), []).filter(item => item.kind !== 'noise' && item.trace) : [];
+  view.append(sectionHead('Tools used in this conversation', 'with where they ran and the tables they touched'));
+  const tools = new Map();
+  for (const item of items) for (const call of item.trace.io?.calls || []) {
+    const t = tools.get(call.name) || {plane: call.plane, calls: 0, tables: new Set()};
+    t.calls += 1;
+    for (const table of [...(call.tables_read || []), ...(call.tables_written || [])]) t.tables.add(table);
+    tools.set(call.name, t);
+  }
+  view.append(tools.size
+    ? inspectorTable(['tool', 'plane', 'calls', 'tables'], [...tools.entries()].map(([name, t]) =>
+      [name, t.plane === 'ai' ? 'AI service' : t.plane === 'core' ? 'Core API' : (t.plane || ''), t.calls, [...t.tables].join(', ')]))
+    : el_('p', 'turn-empty', 'No tool calls reported yet in this conversation.'));
+  view.append(sectionHead('Endpoints this page uses'));
+  view.append(inspectorTable(['endpoint', 'for'], [
+    ['POST /v1/concierge/turn', 'a chat turn (text/event-stream)'], ['POST /v1/voice/token', 'a LiveKit room token for voice'],
+    ['GET /v1/memory/me', 'personal memory'], ['GET /v1/household/me', 'household profiles'],
+    ['GET /v1/pharmacy/stores/nearby', 'the Nearby screen'], ['POST /v1/concierge/conversation/new', 'New chat'],
+  ]));
+  const checking = integrationChecking = Promise.allSettled([
+    fetch(`${API_BASE}/healthz`).then(r => r.json().then(body => ({ok: r.ok, body}))),
+    fetch(`${API_BASE}/readyz`).then(r => r.json().then(body => ({ok: r.ok, body}))),
+  ]);
+  const [health, ready] = await checking;
+  if (checking !== integrationChecking) return;
+  status.replaceChildren();
+  const row = (name, state, detail = '') => {
+    const line = el_('div', 'integration-row');
+    line.append(el_('strong', '', name), el_('span', `guard-verdict guard-${state === 'ok' ? 'pass' : state === 'unknown' ? 'note' : 'error'}`, state));
+    if (detail) line.append(el_('span', 'muted small', detail));
+    status.append(line);
+  };
+  if (health.status !== 'fulfilled') row('API', 'unreachable', "couldn't reach the API from this page");
+  else row('API', health.value.ok && health.value.body?.status === 'ok' ? 'ok' : 'error', 'GET /healthz');
+  if (ready.status !== 'fulfilled') row('Readiness', 'unreachable', 'GET /readyz failed');
+  else {
+    const checks = ready.value.body?.checks || {};
+    const labels = {config: 'Configuration', app_db: 'App database (this app\'s own state)',
+      client_db: 'Client database (read-only business data)', short_term_memory: 'Short-term memory (Redis)'};
+    for (const [key, label] of Object.entries(labels)) {
+      if (key in checks) row(label, checks[key] === 'ok' ? 'ok' : checks[key] === 'off' || checks[key] === 'not_used' ? 'unknown' : String(checks[key]));
+    }
+    if (ready.value.body?.reason) status.append(el_('p', 'muted small', ready.value.body.reason));
+  }
+}
 
 // ---------- New chat ----------
 //

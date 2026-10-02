@@ -54,7 +54,7 @@ test.beforeEach(async ({ page }) => {
   }, { trace: TRACE, greeting: GREETING });
 });
 
-test('the compact sidebar: heading, request count, four cards, the legend and three tabs', async ({ page }) => {
+test('the inspector: heading, request count, four cards, the legend, six tabs, about half the width', async ({ page }) => {
   const view = await page.evaluate(() => ({
     title: document.getElementById('activityTitle').textContent, sub: shopEl.inspectorSub.textContent,
     cards: [...document.querySelectorAll('.inspector-stats .stat span')].map(n => n.textContent),
@@ -76,21 +76,41 @@ test('the compact sidebar: heading, request count, four cards, the legend and th
   expect(view.values[2]).toBe(String(view.writtenRows));
   expect(view.writtenRows).toBeGreaterThan(0);
   expect(view.values[3]).toBe('1');
-  expect(view.columns).toBe(2);
+  expect(view.columns).toBe(4);  // one row on desktop
   expect(view.legend).toContain('Core API');
   expect(view.legend).toContain('AI service');
-  expect(view.tabs).toEqual(['Tool calls', 'Data', 'Memory']);
-  // A sidebar, not half the screen.
-  expect(view.width).toBeLessThan(400);
-  expect(view.chat).toBeGreaterThan(view.width * 2);
+  expect(view.tabs).toEqual(['Tool calls', 'Data', 'Memory', 'AI layer', 'Trace', 'Integration']);
+  // About half of the content width beside the chat (45-50%).
+  const share = view.width / (view.width + view.chat);
+  expect(share).toBeGreaterThan(0.44);
+  expect(share).toBeLessThan(0.51);
 });
 
-test('no memory-steps counter and no AI layer tab: counts are what the cards and tabs say they are', async ({ page }) => {
+test('no memory-steps counter: counts are what the cards and tabs say they are', async ({ page }) => {
   const view = await page.evaluate(() => ({
-    statMemory: !!document.getElementById('statMemory'), aiTab: !!document.getElementById('aiTab'),
-    turnBar: !!document.getElementById('inspectorTurn'),
+    statMemory: !!document.getElementById('statMemory'), turnBar: !!document.getElementById('inspectorTurn'),
+    tabs: ['aiTab', 'traceTab', 'integrationTab'].map(id => !!document.getElementById(id)),
   }));
-  expect(view).toEqual({statMemory: false, aiTab: false, turnBar: false});
+  expect(view).toEqual({statMemory: false, turnBar: false, tabs: [true, true, true]});
+});
+
+test('the chat and the inspector scroll independently and the message box stays in view', async ({ page }) => {
+  const result = await page.evaluate(async ({ greeting }) => {
+    for (let i = 0; i < 12; i++) {
+      const id = crypto.randomUUID();
+      shoppingTurn(id, {userText: `question ${i}`, source: 'text'});
+      await shoppingTurnFinish(id, {status: 'answered', reply: `answer ${i}`, trace: structuredClone(greeting)});
+    }
+    const chat = shopEl.chatMessages, tools = shopEl.toolsTab;
+    chat.scrollTop = 0; tools.scrollTop = 0;
+    tools.scrollTop = 300;
+    const chatAfterInspector = chat.scrollTop;
+    chat.scrollTop = 200;
+    const input = el.askInput.getBoundingClientRect();
+    return {overflow: chat.scrollHeight > chat.clientHeight && tools.scrollHeight > tools.clientHeight,
+      chatAfterInspector, inspectorAfterChat: tools.scrollTop, page: scrollY, inputVisible: input.bottom <= innerHeight && input.top >= 0};
+  }, { greeting: GREETING });
+  expect(result).toEqual({overflow: true, chatAfterInspector: 0, inspectorAfterChat: 300, page: 0, inputVisible: true});
 });
 
 test("selecting a chat turn opens that turn's card, with every step it reported", async ({ page }) => {

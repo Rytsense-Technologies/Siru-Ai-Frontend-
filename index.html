@@ -171,10 +171,15 @@
     </div>
     <p class="inspector-legend"><span class="plane plane-core">Core API</span> existing platform tools and tables
       <span class="plane plane-ai">AI service</span> siru-ai-service, its own data</p>
+    <!-- Guardrail checks this conversation's turns reported (trace "guard" steps) - real decisions only. -->
+    <p id="guardStatus" class="guard-status" role="status">No guardrail checks reported yet</p>
     <div class="panel-tabs" role="tablist" aria-label="Inspector">
       <button id="toolsTabBtn" class="panel-tab" role="tab" type="button" aria-selected="true" aria-controls="toolsTab">Tool calls <b id="activityCount">0</b></button>
       <button id="dataTabBtn" class="panel-tab" role="tab" type="button" aria-selected="false" aria-controls="dataTab">Data <b id="dataCount">0</b></button>
       <button id="memoryTabBtn" class="panel-tab" role="tab" type="button" aria-selected="false" aria-controls="memoryTab">Memory <b id="memoryCount">0</b></button>
+      <button id="aiTabBtn" class="panel-tab" role="tab" type="button" aria-selected="false" aria-controls="aiTab">AI layer</button>
+      <button id="traceTabBtn" class="panel-tab" role="tab" type="button" aria-selected="false" aria-controls="traceTab">Trace</button>
+      <button id="integrationTabBtn" class="panel-tab" role="tab" type="button" aria-selected="false" aria-controls="integrationTab">Integration</button>
     </div>
 
     <section id="toolsTab" role="tabpanel" aria-labelledby="toolsTabBtn">
@@ -253,6 +258,21 @@
       </div>
       <!-- DELETE /v1/memory/me: every fact, household profile, topic, check-in, conversation memory and checkpoint -->
       <button id="memoryForgetAll" type="button" class="link-btn memory-forget-all">Forget everything Siru remembers about me</button>
+    </section>
+
+    <!-- How this conversation's turns ran: the flow, the agents and models used (from their traces). -->
+    <section id="aiTab" role="tabpanel" aria-labelledby="aiTabBtn" hidden>
+      <div id="aiLayerView"></div>
+    </section>
+
+    <!-- One row per turn, from its trace: route, agent, model, calls, tokens, latency, guardrail checks. -->
+    <section id="traceTab" role="tabpanel" aria-labelledby="traceTabBtn" hidden>
+      <div id="traceView"></div>
+    </section>
+
+    <!-- What this page is connected to, checked live (GET /healthz, /readyz), and the endpoints it uses. -->
+    <section id="integrationTab" role="tabpanel" aria-labelledby="integrationTabBtn" hidden>
+      <div id="integrationView"></div>
     </section>
   </aside>
 

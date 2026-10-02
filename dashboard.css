@@ -10,7 +10,8 @@
   --accent: #6d28d9;
   --accent-soft: #f5f3ff;
   --radius: 14px;
-  --inspector: 380px;
+  /* The inspector: about half the content width - a workspace beside the chat. */
+  --inspector: minmax(0, 0.92fr);
 }
 
 body {
@@ -291,9 +292,6 @@ details.card[open] > summary::after { content: ''; transform: translateY(2px) ro
 .data-tools { margin: 4px 0 0; font-family: var(--mono); font-size: 11px; color: var(--ink-soft); overflow-wrap: anywhere; }
 
 /* ---------- narrower screens ---------- */
-@media (max-width: 1400px) {
-  :root { --inspector: 340px; }
-}
 @media (max-width: 1180px) {
   .card.chat-card { min-height: 60vh; }
 }
@@ -712,6 +710,42 @@ html.shop-open, html.shop-open body { overflow: hidden; }
 .guard-verdict.guard-pass { background: #ecfdf3; color: #067647; }
 .guard-meta, .guard-detail { margin: 2px 0 0; color: var(--ink-soft); overflow-wrap: anywhere; }
 .guard-detail { color: var(--ink-2); }
+
+/* ---------- desktop: chat and inspector side by side, each scrolling on its own ---------- */
+@media (min-width: 861px) {
+  .dashboard { height: calc(100vh - 58px); height: calc(100dvh - 58px); padding-bottom: 14px; align-items: stretch; }
+  .dashboard > .card { min-height: 0; }
+  .card.chat-card { min-height: 0; }
+  .card.chat-card .chat-messages { min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain; }
+  .inspector { position: static; max-height: none; min-height: 0; }
+  .inspector > section[role="tabpanel"] { flex: 1; overscroll-behavior: contain; padding-right: 2px; }
+  .inspector-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+/* A compact conversation: less space between and inside messages. */
+.card.chat-card .chat-messages { gap: 12px; padding: 10px 2px; }
+.card.chat-card .chat-bubble { padding: 9px 12px; line-height: 1.5; }
+.chat-heading { padding-bottom: 8px; }
+
+/* ---------- inspector: guardrail status, AI layer, Trace, Integration ---------- */
+.guard-status { margin: 8px 0 0; font-size: 11.5px; color: var(--ink-soft); }
+.guard-status.has-block { color: #b42318; font-weight: 600; }
+.guard-status.has-error { color: #b54708; font-weight: 600; }
+.inspector .panel-tabs { flex-wrap: wrap; }
+.inspector-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 14px 0 8px; }
+.inspector-section-head:first-child { margin-top: 0; }
+.inspector-section-head h3 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
+.inspector-section-head span { min-width: 0; overflow-wrap: anywhere; text-align: right; }
+.inspector-table-wrap { overflow-x: auto; border: 1px solid var(--line-soft); border-radius: 12px; background: #fff; }
+.inspector-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.inspector-table th, .inspector-table td { padding: 7px 9px; text-align: left; border-bottom: 1px solid #f0f1f5; overflow-wrap: anywhere; }
+.inspector-table th { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-soft); background: var(--surface-2); }
+.inspector-table tr.total td { font-weight: 700; border-bottom: 0; }
+.flow-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 0 0 8px; font-size: 12px; }
+.flow-line span { padding: 3px 8px; border-radius: 8px; background: #f4f0ff; color: var(--accent-strong); }
+.flow-line i { font-style: normal; color: var(--ink-soft); }
+.integration-checks { display: grid; gap: 6px; }
+.integration-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--line-soft); border-radius: 10px; background: #fff; font-size: 12px; }
+.integration-row strong { min-width: 0; overflow-wrap: anywhere; }
 
 /* ---------- the Memory tab's household section ---------- */
 .memory-count { margin-left: 6px; min-width: 18px; padding: 0 6px; border-radius: 999px; background: #f2f4f7;
