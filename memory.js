@@ -8,8 +8,7 @@
 const memoryEl = Object.fromEntries([
   "memoryList", "memoryEmpty", "memoryCount", "memoryCountTop", "memoryStatus",
   "memoryConsent", "memoryConsentNote", "stmBadge", "stmSummary", "stmRecent", "memoryCart", "memoryOrders", "memoryRefills",
-  "memoryForgetAll", "householdCount", "householdStatus", "householdEmpty", "householdList", "householdAddBox",
-  "householdForm", "householdRelationship", "householdLabel", "householdAge", "householdNote",
+  "memoryForgetAll", "householdCount", "householdStatus", "householdEmpty", "householdList",
 ].map(id => [id, document.getElementById(id)]));
 
 const MEMORY_LABELS = {
@@ -62,6 +61,7 @@ function memoryItem(item) {
   row.append(head);
   // user_id, category, where it was said, when, and the consent it is kept under.
   const meta = el_('div', 'memory-meta');
+  meta.append(el_('span', 'memory-tag long', 'Long-term'));
   meta.append(el_('span', `memory-tag ${item.category}`, MEMORY_LABELS[item.category] || MEMORY_LABELS.other));
   meta.append(el_('span', '', item.source === 'voice' ? 'Voice' : 'Chat'));
   const when = el_('time', '', memoryWhen(item));
@@ -392,7 +392,7 @@ memoryEl.memoryForgetAll.onclick = async () => {
 
 // ---------- household profiles (GET/POST/PATCH/DELETE /v1/household/me) ----------
 //
-// The people this user shops for - typed in here, or named in a conversation
+// The people this user shops for - named in a conversation
 // ("My mother's name is Saroja, and she is 62"), each labelled with where it
 // came from and when, earlier values kept - never a medicine or dose. Only the signed-in
 // user's own (the server takes the user from the login). Loading, empty and
@@ -422,6 +422,7 @@ function householdItem(member) {
   head.append(remove);
   row.append(head);
   const meta = el_('div', 'memory-meta');
+  meta.append(el_('span', 'memory-tag long', 'Long-term'));
   meta.append(el_('span', 'memory-tag other', HOUSEHOLD_LABELS[member.relationship] || 'Other'));
   if (member.age_years != null) meta.append(el_('span', '', `Age ${member.age_years}`));
   // Where it came from, and when: typed in here, or said in a conversation.
@@ -445,7 +446,7 @@ function householdItem(member) {
     line.append(drop);
     box.append(line);
     const about = el_('div', 'memory-meta');
-    about.append(el_('span', 'memory-tag health', 'Household health'));
+    about.append(el_('span', 'memory-tag health', 'Long-term · Household health'));
     about.append(el_('span', '', note.source === 'conversation' ? 'From a conversation' : 'Entered by you'));
     if (note.recorded_at) about.append(el_('span', '', orderWhen(note.recorded_at)));
     about.append(el_('span', 'household-status', 'User-reported; not medically verified'));
@@ -523,25 +524,4 @@ async function householdDelete(member, row, button) {
   }
 }
 
-memoryEl.householdForm.onsubmit = async event => {
-  event.preventDefault();
-  const userId = getUserId();
-  if (!userId) return;
-  const age = memoryEl.householdAge.value.trim();
-  const body = {relationship: memoryEl.householdRelationship.value, label: memoryEl.householdLabel.value.trim(),
-    note: memoryEl.householdNote.value.trim(), ...(age === '' ? {} : {age_years: Number(age)})};
-  const submit = memoryEl.householdForm.querySelector('[type="submit"]');
-  submit.disabled = true;
-  try {
-    await apiFetch('/v1/household/me', {method: 'POST', body: JSON.stringify(body)});
-    if (getUserId() !== userId) return;
-    memoryEl.householdForm.reset();
-    memoryEl.householdAddBox.open = false;
-    await householdRefresh(userId);
-  } catch (error) {
-    // Saved only when the server says so.
-    memoryEl.householdStatus.textContent = `Couldn't save that profile. ${pharmacyError(error)}`;
-  } finally {
-    submit.disabled = false;
-  }
-};
+

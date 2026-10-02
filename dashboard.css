@@ -753,18 +753,16 @@ html.shop-open, html.shop-open body { overflow: hidden; }
 .household-note { margin: 4px 0 0; overflow-wrap: anywhere; }
 .household-health { margin-top: 8px; padding: 8px 10px; border: 1px solid #f3d6a4; border-radius: 10px; background: #fffaf0; }
 .household-status { color: #9a5b00; }
+.memory-scope { margin: 14px 0 6px; padding: 6px 10px; border-radius: 8px; background: #f2f4f7; font-size: 12px; color: var(--ink-soft); }
+.memory-scope-long { background: #eef4ff; color: #1d3f8a; }
+.memory-scope-short { background: #f4f0ff; color: #4b2a99; }
+.memory-kind { display: inline-block; margin-right: 6px; padding: 1px 7px; border-radius: 999px; background: #eef4ff;
+  color: #1d3f8a; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; vertical-align: middle; }
+.memory-kind.short { background: #f4f0ff; color: #4b2a99; }
+.memory-tag.long { background: #eef4ff; color: #1d3f8a; }
 .memory-tag.health { background: #fff1d6; color: #9a5b00; }
 .usual-pharmacy-card { border-color: var(--accent); background: #f5f8ff; }
 .usual-pharmacy-card > p { font-weight: 600; }
-.household-add { margin-top: 8px; font-size: 12.5px; }
-.household-add > summary { cursor: pointer; color: var(--accent); font-weight: 600; }
-.household-form { display: grid; gap: 8px; margin-top: 8px; }
-.household-form label { display: grid; gap: 3px; font-size: 12px; color: var(--ink-2); }
-.household-form input, .household-form select { min-width: 0; padding: 7px 9px; border: 1px solid var(--line-soft);
-  border-radius: 8px; font: inherit; background: #fff; }
-.household-form button { justify-self: start; padding: 7px 14px; border: 1px solid var(--ink); border-radius: 8px;
-  background: var(--ink); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
-.household-form button:disabled { opacity: .6; cursor: default; }
 
 /* ---------- long values wrap inside their own component ----------
    Product, pharmacy and table names, ids, error codes and option labels can be

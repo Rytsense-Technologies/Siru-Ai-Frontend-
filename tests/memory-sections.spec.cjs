@@ -197,3 +197,22 @@ test('"Nothing remembered yet" is not shown while household records exist', asyn
   expect(state.empty).toContain('household');
   expect(state.top).toBe('1');
 });
+
+test('persistent records are labelled Long-Term Memory, the conversation Short-Term; no "Add a person" form', async ({ page }) => {
+  api.set('a', {household: [member('m1', 'Saroja', {source: 'conversation', health_notes: [
+    {id: 'n1', kind: 'allergy', value: 'Dolo 650', source: 'conversation', recorded_at: '2026-10-02T09:00:00Z', status: 'user_reported'}]})]});
+  const tab = await page.evaluate(async () => {
+    await signInAs('a'); panelShow('memory'); await householdRefresh();
+    const panel = document.getElementById('memoryTab');
+    return {heads: [...panel.querySelectorAll('h3')].map(h => h.textContent.replace(/\s+/g, ' ').trim()),
+      card: memoryEl.householdList.textContent, form: !!document.getElementById('householdForm'),
+      addPerson: panel.textContent.includes('Add a person')};
+  });
+  expect(tab.heads.some(h => h.startsWith('Long-Term Memory Personal facts'))).toBe(true);
+  expect(tab.heads.some(h => h.startsWith('Long-Term Memory Household profiles'))).toBe(true);
+  expect(tab.heads.some(h => h.startsWith('Short-Term Memory This conversation'))).toBe(true);
+  expect(tab.card).toContain('Long-term');
+  expect(tab.card).toContain('Long-term · Household health');
+  expect(tab.form).toBe(false);
+  expect(tab.addPerson).toBe(false);
+});
