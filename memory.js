@@ -7,7 +7,7 @@
 // item. It never shows chat messages - only the facts kept from them.
 const memoryEl = Object.fromEntries([
   "memoryList", "memoryEmpty", "memoryCount", "memoryCountTop", "memoryStatus",
-  "memoryConsent", "memoryConsentNote", "stmBadge", "stmSummary", "stmRecent", "memoryCart", "memoryOrders",
+  "memoryConsent", "memoryConsentNote", "stmBadge", "stmSummary", "stmRecent", "memoryCart", "memoryOrders", "memoryRefills",
   "memoryForgetAll", "householdCount", "householdStatus", "householdEmpty", "householdList", "householdAddBox",
   "householdForm", "householdRelationship", "householdLabel", "householdAge", "householdNote",
 ].map(id => [id, document.getElementById(id)]));
@@ -244,6 +244,42 @@ async function memoryOrdersRefresh(userId) {
   box.replaceChildren(...shown, ...notes.map(text => el_('p', 'muted small', text)));
 }
 
+// Refills due, predicted from the refill schedule or the order history
+// (GET /v1/concierge/refills) - what the server returns, nothing made up here.
+async function memoryRefillsRefresh(userId) {
+  const box = memoryEl.memoryRefills;
+  if (!box) return;
+  if (box.dataset.owner !== userId) {
+    box.dataset.owner = userId;
+    box.replaceChildren(el_('p', 'muted small', 'Loading refills…'));
+  }
+  let items;
+  try {
+    const data = await apiFetch('/v1/concierge/refills');
+    items = Array.isArray(data.items) ? data.items : [];
+  } catch (error) {
+    if (getUserId() !== userId) return;
+    box.replaceChildren(el_('p', 'muted small', `Couldn't load refills just now. ${pharmacyError(error)}`));
+    return;
+  }
+  if (getUserId() !== userId) return;
+  if (!items.length) {
+    box.replaceChildren(el_('p', 'muted small', 'No refills due - they appear once a medicine is ordered more than once or a refill schedule is set.'));
+    return;
+  }
+  box.replaceChildren(...items.slice(0, 8).map(item => {
+    const row = el_('article', 'memory-item refill-item');
+    row.append(el_('p', 'memory-text', item.medName || 'Medicine'));
+    const meta = el_('div', 'memory-meta');
+    const days = Number(item.daysUntil);
+    meta.append(el_('span', 'memory-tag other', days < 0 ? 'Overdue' : days === 0 ? 'Due today' : `Due in ${days} day${days === 1 ? '' : 's'}`));
+    if (item.dueDate) meta.append(el_('span', '', item.dueDate));
+    meta.append(el_('span', '', item.source === 'refill_schedule' ? 'Refill schedule' : 'From your order history'));
+    row.append(meta);
+    return row;
+  }));
+}
+
 // Reads the user's memory into the tab. `delayed` waits for a turn's
 // background save first. Best effort: a failure leaves this user's list as
 // last loaded; with none loaded yet the count is unknown ("–"), not 0.
@@ -257,6 +293,7 @@ function memoryRefresh({delayed = false} = {}) {
     memoryCartRender(null);
     memoryEl.memoryOrders.replaceChildren();
     delete memoryEl.memoryOrders.dataset.owner;
+    if (memoryEl.memoryRefills) { memoryEl.memoryRefills.replaceChildren(); delete memoryEl.memoryRefills.dataset.owner; }
     memoryEl.stmRecent.replaceChildren();
     memoryEl.stmSummary.textContent = 'No conversation yet.';
     if (typeof householdReset === 'function') householdReset();
@@ -269,6 +306,7 @@ function memoryRefresh({delayed = false} = {}) {
   memoryShortTermRefresh(userId);
   memoryCartRender(typeof shop === 'object' ? shop.cart : null);
   memoryOrdersRefresh(userId);
+  memoryRefillsRefresh(userId);
   householdRefresh(userId);
   memoryLoading = pharmacyApi.memory()
     .then(data => {
@@ -345,8 +383,9 @@ memoryEl.memoryForgetAll.onclick = async () => {
 
 // ---------- household profiles (GET/POST/PATCH/DELETE /v1/household/me) ----------
 //
-// The people this user shops for, exactly as they entered them - never
-// inferred from a conversation, never a medicine or dose. Only the signed-in
+// The people this user shops for - typed in here, or named in a conversation
+// ("My mother's name is Saroja, and she is 62"), each labelled with where it
+// came from and when, earlier values kept - never a medicine or dose. Only the signed-in
 // user's own (the server takes the user from the login). Loading, empty and
 // failed are three different states; another user's profiles never stay.
 const HOUSEHOLD_LABELS = {mother: 'Mother', father: 'Father', spouse: 'Spouse', son: 'Son', daughter: 'Daughter',
@@ -376,9 +415,19 @@ function householdItem(member) {
   const meta = el_('div', 'memory-meta');
   meta.append(el_('span', 'memory-tag other', HOUSEHOLD_LABELS[member.relationship] || 'Other'));
   if (member.age_years != null) meta.append(el_('span', '', `Age ${member.age_years}`));
-  meta.append(el_('span', '', 'Entered by you'));
+  // Where it came from, and when: typed in here, or said in a conversation.
+  meta.append(el_('span', 'household-source', member.source === 'conversation' ? 'From a conversation' : 'Entered by you'));
+  const when = member.updated_at || member.created_at;
+  if (when) meta.append(el_('span', '', orderWhen(when)));
   row.append(meta);
   if (member.note) row.append(el_('p', 'muted small household-note', member.note));
+  // A changed value is never silently lost: the earlier ones, newest first.
+  const history = Array.isArray(member.history) ? member.history : [];
+  if (history.length) {
+    const words = {age_years: 'age', label: 'name', relationship: 'relationship', note: 'note'};
+    row.append(el_('p', 'muted small household-history', 'Earlier: ' + history.slice().reverse()
+      .map(h => `${words[h.field] || h.field} ${h.value}${h.until ? ` (until ${orderWhen(h.until)})` : ''}`).join('; ')));
+  }
   return row;
 }
 

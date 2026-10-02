@@ -33,6 +33,7 @@ test.beforeEach(async ({ page }) => {
     }
     if (path.startsWith('/v1/pharmacy/orders/')) return answer(mine.siruOrders);
     if (path === '/v1/actions/demo') return answer(mine.demo);
+    if (path === '/v1/concierge/refills') return answer(mine.refills === undefined ? {items: []} : mine.refills);
     if (path === '/v1/memory/me') return route.fulfill({headers: cors, json: {items: [], memory_enabled: true}});
     return route.abort();
   });
@@ -138,4 +139,30 @@ test('a cart that could not be loaded says so - not "Loading the cart…" foreve
   });
   expect(cart).toContain("Couldn't load your cart just now.");
   expect(cart).not.toContain('Loading the cart');
+});
+
+test('a member named in a conversation says so, with when, and keeps the earlier age', async ({ page }) => {
+  api.set('a', {household: [member('m1', 'Saroja', {age_years: 63, source: 'conversation', updated_at: '2026-10-02T09:00:00Z',
+    history: [{field: 'age_years', value: 62, until: '2026-10-02T09:00:00Z', source: 'conversation'}]})]});
+  const text = await page.evaluate(async () => { await signInAs('a'); await householdRefresh(); return memoryEl.householdList.textContent; });
+  expect(text).toContain('Saroja');
+  expect(text).toContain('Age 63');
+  expect(text).toContain('From a conversation');
+  expect(text).not.toContain('Entered by you');
+  expect(text).toContain('Earlier: age 62');
+});
+
+test('refills show what the server predicted; none is an honest empty state, a failure is not "none"', async ({ page }) => {
+  api.set('a', {refills: {items: [{medName: 'Amlong 5', dueDate: '2026-10-05', daysUntil: 3, source: 'order_history'}]}});
+  const due = await page.evaluate(async () => { await signInAs('a'); await memoryRefillsRefresh('a'); return memoryEl.memoryRefills.textContent; });
+  expect(due).toContain('Amlong 5');
+  expect(due).toContain('Due in 3 days');
+  expect(due).toContain('From your order history');
+  api.set('b', {refills: {items: []}});
+  const none = await page.evaluate(async () => { await signInAs('b'); await memoryRefillsRefresh('b'); return memoryEl.memoryRefills.textContent; });
+  expect(none).toContain('No refills due');
+  expect(none).not.toContain('Amlong');
+  api.set('c', {refills: 503});
+  const failed = await page.evaluate(async () => { await signInAs('c'); await memoryRefillsRefresh('c'); return memoryEl.memoryRefills.textContent; });
+  expect(failed).toContain("Couldn't load refills just now.");
 });
