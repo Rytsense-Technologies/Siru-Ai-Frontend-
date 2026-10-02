@@ -751,6 +751,11 @@ html.shop-open, html.shop-open body { overflow: hidden; }
 .memory-count { margin-left: 6px; min-width: 18px; padding: 0 6px; border-radius: 999px; background: #f2f4f7;
   color: var(--ink-soft); font-size: 11px; font-weight: 600; }
 .household-note { margin: 4px 0 0; overflow-wrap: anywhere; }
+.household-health { margin-top: 8px; padding: 8px 10px; border: 1px solid #f3d6a4; border-radius: 10px; background: #fffaf0; }
+.household-status { color: #9a5b00; }
+.memory-tag.health { background: #fff1d6; color: #9a5b00; }
+.usual-pharmacy-card { border-color: var(--accent); background: #f5f8ff; }
+.usual-pharmacy-card > p { font-weight: 600; }
 .household-add { margin-top: 8px; font-size: 12.5px; }
 .household-add > summary { cursor: pointer; color: var(--accent); font-weight: 600; }
 .household-form { display: grid; gap: 8px; margin-top: 8px; }

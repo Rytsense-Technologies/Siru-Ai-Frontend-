@@ -26,6 +26,11 @@ test.beforeEach(async ({ page }) => {
       const h = mine.household;
       return answer(typeof h === 'number' || h === undefined ? h : (h.then ? h.then(members => ({members})) : {members: h}));
     }
+    if (path.includes('/notes/') && request.method() === 'DELETE') {
+      const [, , , , memberId, , noteId] = path.split('/');
+      for (const m of mine.household || []) if (m.id === memberId) m.health_notes = (m.health_notes || []).filter(n => n.id !== noteId);
+      return route.fulfill({headers: cors, json: {deleted: true, id: noteId}});
+    }
     if (path.startsWith('/v1/household/me/') && request.method() === 'DELETE') {
       const id = path.split('/').pop();
       mine.household = (mine.household || []).filter(m => m.id !== id);
@@ -165,4 +170,30 @@ test('refills show what the server predicted; none is an honest empty state, a f
   api.set('c', {refills: 503});
   const failed = await page.evaluate(async () => { await signInAs('c'); await memoryRefillsRefresh('c'); return memoryEl.memoryRefills.textContent; });
   expect(failed).toContain("Couldn't load refills just now.");
+});
+
+test("a household member's reported allergy shows as user-reported, with its source and date, and can be deleted", async ({ page }) => {
+  api.set('a', {household: [member('m1', 'Saroja', {age_years: 62, source: 'conversation', health_notes: [
+    {id: 'n1', kind: 'allergy', value: 'Dolo 650', source: 'conversation', recorded_at: '2026-10-02T09:00:00Z', status: 'user_reported'}]})]});
+  page.on('dialog', dialog => dialog.accept());
+  const text = await page.evaluate(async () => { await signInAs('a'); panelShow('memory'); await householdRefresh(); return memoryEl.householdList.textContent; });
+  expect(text).toContain('Allergy: Dolo 650');
+  expect(text).toContain('Household health');
+  expect(text).toContain('User-reported; not medically verified');
+  expect(text).toContain('From a conversation');
+  // (the sign-in's location dialog may be open over the panel)
+  await page.evaluate(() => document.querySelector('.household-health .memory-forget').click());
+  await expect.poll(() => page.evaluate(() => memoryEl.householdList.textContent)).not.toContain('Dolo 650');
+  expect(await page.evaluate(() => sections().household)).toEqual(['Saroja']);  // the profile stays
+});
+
+test('"Nothing remembered yet" is not shown while household records exist', async ({ page }) => {
+  api.set('a', {household: [member('m1', 'Saroja')]});
+  const state = await page.evaluate(async () => {
+    await signInAs('a'); await memoryRefresh(); await householdRefresh(); await settle();
+    return {empty: memoryEl.memoryEmpty.textContent, top: memoryEl.memoryCountTop.textContent};
+  });
+  expect(state.empty).not.toBe('Nothing remembered yet.');
+  expect(state.empty).toContain('household');
+  expect(state.top).toBe('1');
 });

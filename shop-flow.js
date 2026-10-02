@@ -435,7 +435,10 @@ async function shopFlowPlace() {
   if (button) { button.disabled = true; button.textContent = 'Placing your order...'; }
   try {
     // The same prepare-then-confirm the chat uses: priced from the server's cart.
-    const prepared = await apiFetch('/v1/actions/orders', {method: 'POST', body: JSON.stringify({payment_method: shopFlow.payment})});
+    // The delivery location goes with the order: the usual pharmacy is learned per location.
+    const place = typeof locationTurnContext === 'function' ? locationTurnContext() : null;
+    const where = place?.lat != null ? {lat: place.lat, lng: place.lng} : {};
+    const prepared = await apiFetch('/v1/actions/orders', {method: 'POST', body: JSON.stringify({payment_method: shopFlow.payment, ...where})});
     const done = await apiFetch(`/v1/actions/${encodeURIComponent(prepared.action.id)}/confirm`, {method: 'POST'});
     const order = done.order || {};
     await shoppingRefresh();

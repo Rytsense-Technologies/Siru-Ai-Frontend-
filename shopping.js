@@ -1216,6 +1216,8 @@ function shoppingChoicesCard(card, time) {
   if (!options.length) return null;
   const {entry} = chatEntry({label: 'Choose', time, className: 'card-entry'});
   const box = el_('div', 'chat-card choices-card');
+  // The usual pharmacy (from the user's own orders here), shown apart above the nearest list.
+  if (options.some(o => o.usual)) box.classList.add('usual-pharmacy-card');
   if (card.question) box.append(el_('p', '', card.question));
   const bar = el_('div', 'slot-buttons');
   for (const option of options) {

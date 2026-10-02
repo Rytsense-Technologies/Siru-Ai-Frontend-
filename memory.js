@@ -41,10 +41,7 @@ async function memoryForget(item, row) {
   try {
     await pharmacyApi.forgetMemory(item.id);
     row.remove();
-    const count = memoryEl.memoryList.children.length;
-    memoryEl.memoryCount.textContent = count;
-    memoryEl.memoryCountTop.textContent = count;
-    memoryEl.memoryEmpty.hidden = count > 0;
+    memoryCountsShow();
   } catch (error) {
     button.disabled = false;
     memoryEl.memoryStatus.textContent = "Couldn't forget that just now.";
@@ -80,9 +77,21 @@ function memoryItem(item) {
 
 function memoryRender(items) {
   memoryEl.memoryList.replaceChildren(...items.map(memoryItem));
-  memoryEl.memoryCount.textContent = items.length;
-  memoryEl.memoryCountTop.textContent = items.length;
-  memoryEl.memoryEmpty.hidden = items.length > 0;
+  memoryCountsShow();
+}
+
+// The counts and the empty state from what is on screen: the Memory button
+// counts the personal facts and the household profiles; "Nothing remembered
+// yet" only when there are neither - personal facts can be none while the
+// household section below has records.
+function memoryCountsShow() {
+  const facts = memoryEl.memoryList.children.length;
+  const members = memoryEl.householdList ? memoryEl.householdList.children.length : 0;
+  memoryEl.memoryCount.textContent = facts;
+  memoryEl.memoryCountTop.textContent = facts + members;
+  memoryEl.memoryEmpty.hidden = facts > 0;
+  memoryEl.memoryEmpty.textContent = members
+    ? 'No personal facts yet - what Siru remembers about your household is below.' : 'Nothing remembered yet.';
 }
 
 function memoryDuration(seconds) {
@@ -421,6 +430,28 @@ function householdItem(member) {
   if (when) meta.append(el_('span', '', orderWhen(when)));
   row.append(meta);
   if (member.note) row.append(el_('p', 'muted small household-note', member.note));
+  // Health notes the user reported for this person (an allergy): what, where
+  // it came from, when - and that it is user-reported, not a verified record.
+  for (const note of Array.isArray(member.health_notes) ? member.health_notes : []) {
+    const box = el_('div', 'household-health');
+    const line = el_('div', 'memory-head');
+    line.append(el_('p', 'memory-text', `${note.kind === 'allergy' ? 'Allergy' : 'Health note'}: ${note.value}`));
+    const drop = el_('button', 'icon-btn memory-forget');
+    drop.append(icon('trash'));
+    drop.type = 'button';
+    drop.title = 'Delete this note';
+    drop.setAttribute('aria-label', `Delete the note: ${note.value}`);
+    drop.onclick = () => householdNoteDelete(member, note, box, drop);
+    line.append(drop);
+    box.append(line);
+    const about = el_('div', 'memory-meta');
+    about.append(el_('span', 'memory-tag health', 'Household health'));
+    about.append(el_('span', '', note.source === 'conversation' ? 'From a conversation' : 'Entered by you'));
+    if (note.recorded_at) about.append(el_('span', '', orderWhen(note.recorded_at)));
+    about.append(el_('span', 'household-status', 'User-reported; not medically verified'));
+    box.append(about);
+    row.append(box);
+  }
   // A changed value is never silently lost: the earlier ones, newest first.
   const history = Array.isArray(member.history) ? member.history : [];
   if (history.length) {
@@ -435,6 +466,20 @@ function householdRender(members) {
   memoryEl.householdList.replaceChildren(...members.map(householdItem));
   memoryEl.householdCount.textContent = members.length;
   memoryEl.householdEmpty.hidden = members.length > 0;
+  if (memoryShownFor === getUserId()) memoryCountsShow();
+}
+
+async function householdNoteDelete(member, note, box, button) {
+  if (!window.confirm(`Delete "${note.value}" from ${member.label}'s profile?`)) return;
+  button.disabled = true;
+  try {
+    await apiFetch(`/v1/household/me/${encodeURIComponent(member.id)}/notes/${encodeURIComponent(note.id)}`, {method: 'DELETE'});
+    box.remove();
+    memoryEl.householdStatus.textContent = '';
+  } catch (error) {
+    button.disabled = false;
+    memoryEl.householdStatus.textContent = `Couldn't delete that just now. ${pharmacyError(error)}`;
+  }
 }
 
 async function householdRefresh(userId = getUserId()) {
@@ -470,6 +515,7 @@ async function householdDelete(member, row, button) {
     const count = memoryEl.householdList.children.length;
     memoryEl.householdCount.textContent = count;
     memoryEl.householdEmpty.hidden = count > 0;
+    if (memoryShownFor === getUserId()) memoryCountsShow();
     memoryEl.householdStatus.textContent = '';
   } catch (error) {
     button.disabled = false;
