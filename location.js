@@ -7,9 +7,15 @@
 // A denied permission stays denied until the user changes it in the browser;
 // the permission's own change event (and coming back to the tab) notices.
 //
+// A typed address is placed on the map by the server's geocoder (POST
+// /v1/pharmacy/geocode) and saved only once the user confirms the place found,
+// with its own coordinates - so pharmacies are measured from where the user
+// said, never from wherever the browser happens to be. No place found: nothing
+// is saved, and the user is asked again (never a default city).
+//
 // Kept per user and per tab (sessionStorage, siru_location_<user>), rounded
-// to ~110 m, and forgotten on sign-out. Never sent to the server except as
-// the lat/lng of that one catalog request; nothing here is logged.
+// to ~110 m, and forgotten on sign-out. Sent to the server only as the lat/lng
+// of a catalog request or a chat turn; nothing here is logged.
 const LOCATION_TIMEOUT_MS = 10000;
 const LOCATION_MAX_AGE_MS = 5 * 60 * 1000;
 const LOCATION_DECIMALS = 3;
@@ -22,7 +28,8 @@ const siruLocation = {
   loading: false,
   // null, or {code: 'denied'|'unavailable'|'timeout'|'unsupported'|'insecure', message}
   error: null,
-  // null, or {source: 'device'|'manual', lat, lng, accuracy, timestamp, label, address, pincode}
+  // null, or {source: 'device'|'manual', lat, lng, accuracy, timestamp, label, address, pincode,
+  //           mapLabel, precision} - a manual place's mapLabel/precision: what the geocoder found
   place: null,
   userId: null,
   listeners: new Set(),
@@ -207,16 +214,46 @@ function locationRequestCurrent() {
   return siruLocation.request;
 }
 
-// A typed address. Returns an error message, or null when saved.
-function locationSetManual({label, address, pincode}) {
+// What is wrong with a typed address (a message), or null.
+function locationAddressError({address, pincode}) {
   const text = String(address || '').trim().replace(/\s+/g, ' ');
   const pin = String(pincode || '').trim();
   if (!text) return 'Enter the address to deliver to.';
   if (text.length > LOCATION_ADDRESS_MAX) return `Keep the address under ${LOCATION_ADDRESS_MAX} characters.`;
   if (pin && !/^\d{6}$/.test(pin)) return 'A pincode is 6 digits.';
+  return null;
+}
+
+// The places the server's geocoder found for a typed address:
+// [{lat, lng, label, precision, matched}], [] when none. Throws when it couldn't look.
+async function locationGeocode({address, pincode}) {
+  const data = await apiFetch('/v1/pharmacy/geocode', {method: 'POST', body: JSON.stringify({
+    address: String(address || '').trim().replace(/\s+/g, ' '), pincode: String(pincode || '').trim()})});
+  return (data?.places || []).filter(p => locationValidCoords(Number(p.lat), Number(p.lng)));
+}
+
+// How precisely a confirmed address was placed, said to the user ('' = the address itself).
+function locationPrecisionNote(precision) {
+  return {
+    locality: 'Placed by its locality - distances are approximate.',
+    pincode: 'Placed by its pincode area - distances are approximate.',
+    town: 'Placed at the town centre - distances are approximate.',
+    area: 'Placed approximately - distances are approximate.',
+  }[precision] || '';
+}
+
+// A typed address with the place the user confirmed for it (one of
+// locationGeocode's). Returns an error message, or null when saved.
+function locationSetManual({label, address, pincode}, found) {
+  const invalid = locationAddressError({address, pincode});
+  if (invalid) return invalid;
+  const lat = Number(found?.lat), lng = Number(found?.lng);
+  if (!locationValidCoords(lat, lng)) return 'Find the address on the map first.';
   locationSave({
-    source: 'manual', lat: null, lng: null, accuracy: null, timestamp: Date.now(),
-    label: LOCATION_LABELS.includes(label) ? label : 'Other', address: text, pincode: pin,
+    source: 'manual', lat: locationRound(lat), lng: locationRound(lng), accuracy: null, timestamp: Date.now(),
+    label: LOCATION_LABELS.includes(label) ? label : 'Other',
+    address: String(address).trim().replace(/\s+/g, ' '), pincode: String(pincode || '').trim(),
+    mapLabel: String(found.label || '').slice(0, LOCATION_ADDRESS_MAX), precision: String(found.precision || 'area'),
   });
   return null;
 }
@@ -246,7 +283,12 @@ function locationDescribe(place = siruLocation.place) {
     const accuracy = place.accuracy ? ` · accurate to ~${place.accuracy < 1000 ? `${place.accuracy} m` : `${Math.round(place.accuracy / 100) / 10} km`}` : '';
     return {title: place.label || 'Current location', line: `From your device${accuracy}`};
   }
-  return {title: place.label || 'Address', line: [place.address, place.pincode].filter(Boolean).join(' – ')};
+  const where = [place.address, place.pincode].filter(Boolean).join(' – ');
+  // An address saved before it could be placed on the map: said, so nobody
+  // takes distances as measured from it.
+  if (place.lat == null || place.lng == null) return {title: place.label || 'Address', line: `${where} · not on the map yet`};
+  const approximate = ['locality', 'pincode', 'town', 'area'].includes(place.precision) ? ' · approximate' : '';
+  return {title: place.label || 'Address', line: `${where}${approximate}`};
 }
 
 // A reload of a signed-in tab: the shelf's first load already measures from

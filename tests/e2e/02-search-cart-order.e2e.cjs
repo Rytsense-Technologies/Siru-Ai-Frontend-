@@ -3,7 +3,7 @@
 // (the client database, read only - or the sandbox in CI); its price is the
 // catalog's, and the cart must hold exactly that.
 const { test } = require('@playwright/test');
-const { env, signIn, api, say, expect } = require('./helpers.cjs');
+const { env, signIn, api, say, meId, expect } = require('./helpers.cjs');
 
 let product = null;
 let actionId = null;
@@ -21,7 +21,7 @@ test.describe.serial('search, cart and order', () => {
   test('a product search answers from the catalog', async ({ page }) => {
     const [a] = env().accounts;
     await signIn(page, a);
-    await api(page, `/v1/pharmacy/cart/${(await api(page, '/v1/auth/me')).body.user_id}`, { method: 'DELETE' });
+    await api(page, `/v1/pharmacy/cart/${await meId(page)}`, { method: 'DELETE' });
     product = await pickProduct(page);
     const { text } = await say(page, `Do you have ${product.name}?`);
     expect(text.length).toBeGreaterThan(0);
@@ -31,7 +31,7 @@ test.describe.serial('search, cart and order', () => {
   test('added by chat, the cart holds the catalog\'s price, and a reload keeps it', async ({ page }) => {
     const [a] = env().accounts;
     await signIn(page, a);
-    const me = (await api(page, '/v1/auth/me')).body.user_id;
+    const me = await meId(page);
     await say(page, `add ${product.name} to my cart`);
     const cart = await api(page, `/v1/pharmacy/cart/${me}`);
     expect(cart.status).toBe(200);
@@ -45,7 +45,7 @@ test.describe.serial('search, cart and order', () => {
   test('checkout prepares, Confirm places it once, and a second confirm changes nothing', async ({ page }) => {
     const [a] = env().accounts;
     await signIn(page, a);
-    const me = (await api(page, '/v1/auth/me')).body.user_id;
+    const me = await meId(page);
     const ordersBefore = (await api(page, '/v1/actions/demo')).body;
     await say(page, 'place my order');
     const card = page.locator('.confirm-card[data-action-id]').last();

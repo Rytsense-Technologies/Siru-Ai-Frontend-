@@ -5,7 +5,7 @@ const locEl = Object.fromEntries([
   'locationRow', 'locationRowTitle', 'locationRowLine', 'locationChangeBtn', 'locationDialog', 'locationTitle',
   'locationCloseBtn', 'locationIntro', 'locationStatus', 'locationBlockedHelp', 'locationUseDeviceBtn',
   'locationManualBtn', 'locationManualForm', 'locationLabel', 'locationAddress', 'locationPincode',
-  'locationFormError',
+  'locationFormError', 'locationFindBtn', 'locationGeocodeResult',
 ].map(id => [id, document.getElementById(id)]));
 
 let locationLastPlaceKey = null;
@@ -49,11 +49,13 @@ function locationRender() {
   }
 }
 
-function locationOpen() {
+function locationOpen({manual = false} = {}) {
   locEl.locationFormError.hidden = true;
   locEl.locationManualForm.hidden = true;
+  locationGeocodeClear();
   locationRender();
   if (!locEl.locationDialog.open) locEl.locationDialog.showModal();
+  if (manual) locationManualShow();
 }
 
 function locationClose() {
@@ -97,7 +99,7 @@ locationSubscribe(locationRender);
 locEl.locationChangeBtn.onclick = locationOpen;
 locEl.locationCloseBtn.onclick = locationClose;
 locEl.locationUseDeviceBtn.onclick = locationUseDevice;
-locEl.locationManualBtn.onclick = () => {
+function locationManualShow() {
   locEl.locationManualForm.hidden = false;
   const place = siruLocation.place;
   if (place?.source === 'manual') {
@@ -106,16 +108,91 @@ locEl.locationManualBtn.onclick = () => {
     locEl.locationPincode.value = place.pincode;
   }
   locEl.locationAddress.focus();
-};
-locEl.locationManualForm.addEventListener('submit', event => {
-  event.preventDefault();
-  const error = locationSetManual({
-    label: locEl.locationLabel.value, address: locEl.locationAddress.value, pincode: locEl.locationPincode.value,
+}
+locEl.locationManualBtn.onclick = locationManualShow;
+
+function locationFormError(message) {
+  locEl.locationFormError.textContent = message || '';
+  locEl.locationFormError.hidden = !message;
+}
+
+function locationGeocodeClear() {
+  locEl.locationGeocodeResult.replaceChildren();
+  locEl.locationGeocodeResult.hidden = true;
+}
+
+// The places found for the typed address, for the user to confirm one -
+// nothing is saved until they do. Editing the address forgets them.
+function locationGeocodeShow(fields, places) {
+  const box = locEl.locationGeocodeResult;
+  const list = el_('div', 'location-geocode-list');
+  list.setAttribute('role', 'radiogroup');
+  list.setAttribute('aria-label', 'Places found for this address');
+  places.forEach((place, i) => {
+    const option = el_('label', 'location-geocode-option');
+    const radio = el_('input');
+    radio.type = 'radio';
+    radio.name = 'locationGeocodePick';
+    radio.value = String(i);
+    radio.checked = i === 0;
+    const text = el_('span', 'location-geocode-text');
+    text.append(el_('strong', '', place.label));
+    const note = locationPrecisionNote(place.precision);
+    if (note) text.append(el_('span', 'muted small', note));
+    option.append(radio, text);
+    list.append(option);
   });
-  locEl.locationFormError.textContent = error || '';
-  locEl.locationFormError.hidden = !error;
-  if (!error) locationClose();
+  const use = el_('button', 'location-geocode-use', places.length > 1 ? 'Use the selected place' : 'Use this place');
+  use.type = 'button';
+  use.onclick = () => {
+    const picked = list.querySelector('input[name="locationGeocodePick"]:checked');
+    const error = locationSetManual(fields, places[Number(picked?.value || 0)]);
+    locationFormError(error);
+    if (!error) {
+      locationGeocodeClear();
+      locationClose();
+    }
+  };
+  box.replaceChildren(
+    el_('p', 'location-geocode-head', places.length > 1 ? 'Which of these is it?' : 'Is this the place?'), list, use,
+    el_('p', 'muted small', "Not it? Change the address (add the area, city or pincode) and press Find on map again."));
+  box.hidden = false;
+  use.focus();
+}
+
+locEl.locationManualForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const fields = {
+    label: locEl.locationLabel.value, address: locEl.locationAddress.value, pincode: locEl.locationPincode.value,
+  };
+  const invalid = locationAddressError(fields);
+  locationFormError(invalid);
+  locationGeocodeClear();
+  if (invalid) return;
+  const userId = siruLocation.userId;
+  locEl.locationFindBtn.disabled = true;
+  locEl.locationFindBtn.textContent = 'Finding it on the map…';
+  let places = null;
+  try {
+    places = await locationGeocode(fields);
+  } catch (err) {
+    // The lookup failed: said so - nothing saved, no place assumed.
+    locationFormError(err?.status === 503
+      ? "Address lookup isn't available right now. Use your current location, or try again shortly."
+      : `Couldn't look up the address. ${typeof pharmacyError === 'function' ? pharmacyError(err) : ''}`.trim());
+  } finally {
+    locEl.locationFindBtn.disabled = false;
+    locEl.locationFindBtn.textContent = 'Find on map';
+  }
+  if (places === null || siruLocation.userId !== userId) return;
+  if (!places.length) {
+    locationFormError("We couldn't find this address on the map. Check the spelling or add the 6-digit pincode - "
+      + 'or use your current location.');
+    return;
+  }
+  locationGeocodeShow(fields, places);
 });
+for (const input of [locEl.locationAddress, locEl.locationPincode]) input.addEventListener('input', locationGeocodeClear);
 // Esc must not skip past a required location.
 locEl.locationDialog.addEventListener('cancel', event => { if (!siruLocation.place) event.preventDefault(); });
 // Back from the browser's site settings: read the permission again (no prompt).

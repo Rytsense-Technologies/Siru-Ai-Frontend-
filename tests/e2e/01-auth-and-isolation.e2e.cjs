@@ -1,7 +1,7 @@
 // Sign-in, sign-out and what one user can reach of another's - through the real
 // sign-in form, the real API and its real token checks.
 const { test } = require('@playwright/test');
-const { env, signIn, api, login, say, expect } = require('./helpers.cjs');
+const { env, signIn, api, login, say, meId, expect } = require('./helpers.cjs');
 
 test.describe.serial('authentication and isolation', () => {
   test('a wrong password is refused; the right one signs in', async ({ page }) => {
@@ -20,7 +20,8 @@ test.describe.serial('authentication and isolation', () => {
     const pageB = await (await browser.newContext()).newPage();
     await signIn(pageA, a);
     await signIn(pageB, b);
-    const idA = (await api(pageA, '/v1/auth/me')).body.user_id;
+    const idA = await meId(pageA);
+    expect(idA).toBeTruthy();
     for (const path of [`/v1/pharmacy/cart/${idA}`, `/v1/pharmacy/orders/${idA}`, `/v1/pharmacy/cart/${idA}/bill`]) {
       expect((await api(pageB, path)).status, path).toBe(403);
     }

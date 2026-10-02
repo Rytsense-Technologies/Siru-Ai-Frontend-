@@ -20,6 +20,11 @@ const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes, per requirement
 // turn.start (the user's message), turn.result (the reply, its cards and its
 // activity), reply (the greeting, "say that again").
 const TURN_TOPIC = "siru.turn";
+// The assistant out of view: left, unless the room is reconnecting (checked
+// after ASSISTANT_LEFT_CHECK_MS) - then not back ASSISTANT_REJOIN_MS after
+// the reconnect = left.
+const ASSISTANT_LEFT_CHECK_MS = 2000;
+const ASSISTANT_REJOIN_MS = 8000;
 
 const el = {
   notifBell: document.getElementById("notifBell"),
@@ -329,7 +334,11 @@ async function startVoiceSession() {
       voiceIsolation: true,
       channelCount: 1,
     };
-    const room = new LivekitClient.Room({ audioCaptureDefaults: micCapture });
+    // No Opus DTX: through a silent stretch (a muted mic, or noise
+    // suppression giving exact silence) DTX sends next to nothing, LiveKit
+    // reports this participant's connection as lost, and after 10 s the
+    // client reconnects in full - the call dropped after ~20 s of quiet.
+    const room = new LivekitClient.Room({ audioCaptureDefaults: micCapture, publishDefaults: { dtx: false } });
     connectingRoom = room;
     // The chat comes from the worker's turn messages: the text a turn answered,
     // the reply actually spoken, and that turn's cards - together, by turn id.
@@ -356,7 +365,11 @@ async function startVoiceSession() {
           if (surface.previewText() === segment.text) surface.preview('');
         }, 6000);
       } else {
-        setVoiceStatus('SIRU AI is speaking...');
+        // The assistant's own state: its transcript's last segment arrives
+        // as the speech ends - after it is listening again - and "speaking"
+        // then stayed for the rest of the call.
+        const state = room.remoteParticipants.get(identity)?.attributes?.['lk.agent.state'];
+        showAgentState(state || 'speaking');
       }
     };
     // The agent publishes every transcript twice - as an lk.transcription text
@@ -394,14 +407,15 @@ async function startVoiceSession() {
     // participant attribute lk.agent.state): back to "Listening" as soon as it
     // has finished speaking - its audio track never "ends", so without this
     // the status stayed "speaking" until the user spoke again.
-    room.on(LivekitClient.RoomEvent.ParticipantAttributesChanged, (changed, participant) => {
-      if (room !== voiceRoom || !participant || participant.identity === userId) return;
-      const state = changed?.['lk.agent.state'];
+    const showAgentState = (state) => {
       if (state === 'speaking') setVoiceStatus('SIRU AI is speaking...');
       else if (state === 'thinking') setVoiceStatus('Processing...');
       else if (state === 'listening') setVoiceStatus(micMuted ? "Mic off - waiting for reply" : "Listening - speak anytime");
+    };
+    room.on(LivekitClient.RoomEvent.ParticipantAttributesChanged, (changed, participant) => {
+      if (room !== voiceRoom || !participant || participant.identity === userId) return;
+      showAgentState(changed?.['lk.agent.state']);
     });
-    room.on(LivekitClient.RoomEvent.Reconnected, () => { if (room === voiceRoom) surface.onReconnected(); });
     // The voice worker joins the room on its own; if none does, say so rather
     // than listening to nobody.
     let agentJoined = false;
@@ -416,14 +430,35 @@ async function startVoiceSession() {
     // The voice worker left (its session ended - e.g. speech recognition or
     // synthesis failed for good): end the call rather than stay connected to
     // nobody, keeping the failure the worker reported on screen.
-    room.on(LivekitClient.RoomEvent.ParticipantDisconnected, (participant) => {
-      if (room !== voiceRoom || room.remoteParticipants.size > 0) return;
-      voiceLog('assistant left', {identity: participant.identity});
+    const assistantLeft = () => {
       const reported = typeof voiceErrorShown === 'string' ? voiceErrorShown : '';
       stopVoiceSession();
       setVoiceStatus(reported || 'The voice assistant left the call. Tap the mic to start again.');
+    };
+    room.on(LivekitClient.RoomEvent.ParticipantDisconnected, (participant) => {
+      if (room !== voiceRoom || room.remoteParticipants.size > 0) return;
+      // A full reconnect (a network drop) takes the assistant off this side
+      // for a moment - before the room even says it is reconnecting - while
+      // it stays in the call. Ending the call here aborted that reconnect.
+      // Looked at again shortly; while reconnecting, Reconnected decides.
+      voiceLog('assistant out of view', {identity: participant.identity});
+      setTimeout(() => {
+        if (room !== voiceRoom || room.remoteParticipants.size > 0) return;
+        if (room.state !== LivekitClient.ConnectionState.Connected) return;
+        voiceLog('assistant left', {identity: participant.identity});
+        assistantLeft();
+      }, ASSISTANT_LEFT_CHECK_MS);
     });
-    room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+    room.on(LivekitClient.RoomEvent.Reconnected, () => {
+      if (room !== voiceRoom) return;
+      surface.onReconnected();
+      setTimeout(() => {
+        if (room !== voiceRoom || room.remoteParticipants.size > 0) return;
+        voiceLog('assistant not back after reconnecting');
+        assistantLeft();
+      }, ASSISTANT_REJOIN_MS);
+    });
+    room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
       // Ignore events from a room we've already abandoned (e.g. mic
       // permission was denied and startVoiceSession's catch block already
       // disconnected it) - a track can still arrive and fire this after
@@ -438,11 +473,10 @@ async function startVoiceSession() {
         el_.addEventListener('playing', () => voiceLog('playback started'), {once: true});
         el_.dataset.voiceTrack = "true";
         document.body.appendChild(el_);
-        setVoiceStatus("Assistant is speaking...");
-        el_.addEventListener("ended", () => {
-          if (room !== voiceRoom) return;
-          setVoiceStatus(micMuted ? "Mic off - waiting for reply" : "Listening - speak anytime");
-        });
+        // The assistant's own state, not "speaking": the track is subscribed
+        // again after a reconnect while it is listening, and a live track
+        // never ends - the status stayed "speaking" for the rest of the call.
+        showAgentState(participant?.attributes?.['lk.agent.state'] || 'listening');
       }
     });
     room.on(LivekitClient.RoomEvent.TrackUnsubscribed, (track) => {
@@ -561,6 +595,20 @@ async function stopVoiceSession() {
   voiceActiveSurface.micBtn.disabled = !getUserId();
   if (room) await room.disconnect();
 }
+
+// A voice call is measured from the location it started with (sent once, with
+// the session): a new location ends it, said - rather than answering "nearest"
+// from the old place. Tapping the mic again starts one from the new place.
+let voiceLocationKey = null;
+locationSubscribe(({place}) => {
+  const key = place ? `${place.source}:${place.lat}:${place.lng}` : '';
+  const changed = voiceLocationKey !== null && key !== voiceLocationKey;
+  voiceLocationKey = key;
+  if (!changed || !voiceRoom) return;
+  stopVoiceSession().then(() => {
+    if (getUserId()) setVoiceStatus('Your delivery location changed. Tap the mic to talk from the new location.');
+  });
+});
 
 function resetVoiceUI() {
   document.querySelectorAll("audio[data-voice-track]").forEach((el_) => el_.remove());

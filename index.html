@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Siru Pharmacy — AI Assistant</title>
 <link rel="icon" type="image/svg+xml" href="images/favicon.svg">
-<link rel="stylesheet" href="style.css?v=56">
-<link rel="stylesheet" href="dashboard.css?v=56">
+<link rel="stylesheet" href="style.css?v=57">
+<link rel="stylesheet" href="dashboard.css?v=57">
 <!-- livekit-client 2.22.3, self-hosted (vendor/, Apache-2.0) - pinned, and checked against its hash. -->
 <script src="vendor/livekit-client-2.22.3/livekit-client.umd.js" integrity="sha384-G/xxtkVytOx/ia9Q8MXxM+V0ohsaY1fZAgVP3iSGTPz4wJ0s3+ulJNKXh/gnzEDZ"></script>
 </head>
@@ -163,10 +163,10 @@
     </div>
     <!-- This conversation's real turns (their SSE trace), summed up. -->
     <div class="inspector-stats" aria-label="This conversation">
-      <div class="stat"><strong id="statTools">0</strong><span>tool calls</span><em id="statToolsSplit"></em></div>
-      <div class="stat"><strong id="statTables">0</strong><span>tables touched</span></div>
-      <div class="stat"><strong id="statWrites">0</strong><span>table writes</span></div>
-      <div class="stat"><strong id="statModel">0</strong><span>model calls</span><em id="statTokens"></em></div>
+      <button type="button" class="stat" data-tab="tools"><small>Tool calls</small><strong id="statTools">0</strong><span>tool calls</span><em id="statToolsSplit"></em></button>
+      <button type="button" class="stat" data-tab="data"><small>Data</small><strong id="statTables">0</strong><span>tables touched</span><em><b id="statWrites">0</b> table writes</em></button>
+      <button type="button" class="stat" data-tab="memory"><small>Memory</small><strong id="statMemory">0</strong><span>memory steps</span></button>
+      <button type="button" class="stat" data-tab="ai"><small>AI layer</small><strong id="statModel">0</strong><span>model calls</span><em id="statTokens"></em></button>
     </div>
     <p class="inspector-legend"><span class="plane plane-core">Core API</span> existing platform tools and tables
       <span class="plane plane-ai">AI service</span> siru-ai-service, its own data</p>
@@ -174,7 +174,11 @@
       <button id="toolsTabBtn" class="panel-tab" role="tab" type="button" aria-selected="true" aria-controls="toolsTab">Tool calls <b id="activityCount">0</b></button>
       <button id="dataTabBtn" class="panel-tab" role="tab" type="button" aria-selected="false" aria-controls="dataTab">Data <b id="dataCount">0</b></button>
       <button id="memoryTabBtn" class="panel-tab" role="tab" type="button" aria-selected="false" aria-controls="memoryTab">Memory <b id="memoryCount">0</b></button>
+      <button id="aiTabBtn" class="panel-tab" role="tab" type="button" aria-selected="false" aria-controls="aiTab">AI layer <b id="aiCount">0</b></button>
     </div>
+    <!-- The turn the Data / Memory / AI layer views are about (shopping.js inspectorSelect):
+         the latest by default; a chat turn or a Tool calls card selects another. -->
+    <div id="inspectorTurn" class="inspector-turn" aria-live="polite"></div>
 
     <section id="toolsTab" role="tabpanel" aria-labelledby="toolsTabBtn">
       <p id="activityIgnored" class="noise-note" role="status" hidden></p>
@@ -183,6 +187,8 @@
     </section>
 
     <section id="dataTab" role="tabpanel" aria-labelledby="dataTabBtn" hidden>
+      <div id="turnData" class="turn-section"></div>
+      <h3 class="inspector-subhead">Whole conversation</h3>
       <p class="muted small">Every table this conversation's tools read (R) or wrote (W), as the server reported it.</p>
       <p id="dataEmpty" class="muted small">No tables touched yet.</p>
       <div id="dataList" class="data-list"></div>
@@ -190,6 +196,8 @@
     </section>
 
     <section id="memoryTab" role="tabpanel" aria-labelledby="memoryTabBtn" hidden>
+      <div id="turnMemory" class="turn-section"></div>
+      <h3 class="inspector-subhead">What Siru keeps</h3>
       <!-- Short-term: this conversation's recent turns in Redis (GET /v1/memory/me/short-term). -->
       <div class="memory-section">
         <div class="memory-section-head"><h3>Short-term</h3><span id="stmBadge" class="memory-badge">Not active</span></div>
@@ -217,6 +225,11 @@
       <div id="memoryList" class="memory-list"></div>
       <!-- DELETE /v1/memory/me: every fact, topic, check-in, conversation memory and checkpoint -->
       <button id="memoryForgetAll" type="button" class="link-btn memory-forget-all">Forget everything Siru remembers about me</button>
+    </section>
+
+    <!-- The selected turn's routing, agent, model calls, guards and checkpoint, as traced. -->
+    <section id="aiTab" role="tabpanel" aria-labelledby="aiTabBtn" hidden>
+      <div id="turnAi" class="turn-section"></div>
     </section>
   </aside>
 
@@ -287,7 +300,7 @@
 <dialog id="locationDialog" class="orders-dialog location-dialog" aria-labelledby="locationTitle" aria-describedby="locationIntro">
   <div class="orders-head"><h2 id="locationTitle">Set your location to see nearby pharmacies</h2>
     <button id="locationCloseBtn" type="button" class="icon-btn" aria-label="Close" hidden><span class="icon" data-icon="x"></span></button></div>
-  <p id="locationIntro" class="muted">Siru uses it to pick the nearest pharmacy that delivers to you. It stays in this browser tab and is forgotten when you sign out.</p>
+  <p id="locationIntro" class="muted">Siru uses it to show you the pharmacies nearest to you, to choose from. It stays in this browser tab and is forgotten when you sign out.</p>
   <p id="locationStatus" class="location-status" role="status" aria-live="polite" hidden></p>
   <div id="locationBlockedHelp" class="location-help" hidden>
     <strong>Location is blocked for this site</strong>
@@ -309,9 +322,10 @@
     <textarea id="locationAddress" rows="2" maxlength="200" autocomplete="street-address" required placeholder="House / flat, street, area, city"></textarea>
     <label for="locationPincode">Pincode <span class="muted">(optional)</span></label>
     <input id="locationPincode" inputmode="numeric" maxlength="6" autocomplete="postal-code" placeholder="600056">
-    <p class="muted small">A typed address has no map position: nearby pharmacies are ranked by distance only from your device's location.</p>
+    <p class="muted small">Siru finds this address on the map and asks you to confirm it. Nearby pharmacies and distances are then measured from there.</p>
     <p id="locationFormError" class="login-error" role="alert" hidden></p>
-    <button type="submit">Save address</button>
+    <button id="locationFindBtn" type="submit">Find on map</button>
+    <div id="locationGeocodeResult" class="location-geocode" aria-live="polite" hidden></div>
   </form>
 </dialog>
 <!-- The cart and checkout, only when needed: opened by a turn that changed the
@@ -337,18 +351,18 @@
   <form method="dialog"><button>Continue shopping</button></form>
 </dialog>
 
-<script src="config.js?v=56"></script>
-<script src="safe-dom.js?v=56"></script>
-<script src="icons.js?v=56"></script>
-<script src="users.js?v=56"></script>
-<script src="location.js?v=56"></script>
-<script src="app.js?v=56"></script>
-<script src="pharmacy-api.js?v=56"></script>
-<script src="shopping.js?v=56"></script>
-<script src="shop-flow.js?v=56"></script>
-<script src="memory.js?v=56"></script>
-<script src="location-ui.js?v=56"></script>
-<script src="merchant.js?v=56"></script>
-<script src="user-menu.js?v=56"></script>
+<script src="config.js?v=57"></script>
+<script src="safe-dom.js?v=57"></script>
+<script src="icons.js?v=57"></script>
+<script src="users.js?v=57"></script>
+<script src="location.js?v=57"></script>
+<script src="app.js?v=57"></script>
+<script src="pharmacy-api.js?v=57"></script>
+<script src="shopping.js?v=57"></script>
+<script src="shop-flow.js?v=57"></script>
+<script src="memory.js?v=57"></script>
+<script src="location-ui.js?v=57"></script>
+<script src="merchant.js?v=57"></script>
+<script src="user-menu.js?v=57"></script>
 </body>
 </html>

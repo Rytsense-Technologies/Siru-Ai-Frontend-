@@ -63,6 +63,9 @@ async function login(email, password) {
 // Sends one message and waits for the reply in THAT turn's block (each turn
 // is its own .chat-turn: the user's bubble, then the reply).
 async function say(page, text) {
+  // Send is disabled until the pharmacy has loaded and while a turn is running,
+  // and Enter then submits nothing (the text just stays) - wait for it first.
+  await expect(page.locator('#askForm [type="submit"]')).toBeEnabled({ timeout: 60_000 });
   await page.fill('#askInput', text);
   await page.press('#askInput', 'Enter');
   const turn = page.locator('.chat-turn').filter({ has: page.locator('.chat-bubble.user', { hasText: text }) }).last();
@@ -75,4 +78,10 @@ const SCRIPTS = {
   'ta-IN': /[஀-௿]/, 'hi-IN': /[ऀ-ॿ]/, 'te-IN': /[ఀ-౿]/,
 };
 
-module.exports = { env, open, signIn, token, api, login, say, SCRIPTS, expect };
+// The signed-in user's id, as GET /v1/auth/me returns it (the account's public view: `id`).
+async function meId(page) {
+  const me = await api(page, '/v1/auth/me');
+  return me.body.user_id || me.body.id;
+}
+
+module.exports = { env, open, signIn, token, api, login, say, meId, SCRIPTS, expect };

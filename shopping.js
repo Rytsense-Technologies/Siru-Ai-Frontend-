@@ -33,6 +33,7 @@ const shopEl = Object.fromEntries([
   "activityClose", "liveTranscript", "toolsTab", "memoryTab", "toolsTabBtn", "memoryTabBtn",
   "activityIgnored", "micFilters", "dataTab", "dataTabBtn", "dataList", "dataEmpty", "dataCount", "dataVoiceNote",
   "inspectorSub", "statTools", "statToolsSplit", "statTables", "statWrites", "statModel", "statTokens",
+  "statMemory", "aiTab", "aiTabBtn", "aiCount", "inspectorTurn", "turnData", "turnMemory", "turnAi",
   "cartDialog", "cartBtn", "cartBill", "cartDialogNote", "cartConfirm", "cartTotalLabel",
 ].map(id => [id, document.getElementById(id)]));
 const money = paise => paise == null ? 'Price unavailable' : new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(paise / 100);
@@ -133,9 +134,18 @@ function clockTime(time) {
 }
 
 // Keep the newest message in view, unless the user scrolled up to read.
+// Whether the reader is at the newest message. New content follows only then -
+// someone reading an earlier turn stays where they are. Content growing below
+// (a reply, a streamed step) doesn't change it; only the reader's scrolling does.
+let chatAtBottom = true;
+shopEl.chatMessages.addEventListener('scroll', () => {
+  const box = shopEl.chatMessages;
+  chatAtBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 160;
+}, {passive: true});
+
 function chatScroll(force = false) {
   const box = shopEl.chatMessages;
-  if (force || box.scrollHeight - box.scrollTop - box.clientHeight < 160) box.scrollTop = box.scrollHeight;
+  if (force || chatAtBottom) box.scrollTop = box.scrollHeight;
 }
 
 // One chat entry: "SIRU AI · <agent> · Chat · 3:40 PM" over its content.
@@ -164,7 +174,7 @@ function shoppingMessage(text, role = "assistant", source = "text", id = crypto.
   bubble.dataset.messageId = id;
   entry.append(bubble);
   shopEl.chatMessages.appendChild(entry);
-  chatScroll(!restore);
+  if (!restore) chatScroll();
   if (!restore) userSaveMessage(getUserId(), {id, role, text, source, timestamp: iso, ...(kind ? {kind} : {})});
   return bubble;
 }
@@ -302,6 +312,7 @@ function turnActivityStep(turn, step) {
   else box.querySelector('.activity-steps').append(row);
   turn.activity.set(key, row);
   turnActivitySummary(box);
+  chatScroll();
 }
 
 // The answer (or its failure) arrived: collapsed to one line, kept with the
@@ -350,6 +361,7 @@ function shoppingTurn(turnId, {userText = '', source = 'text', time = null} = {}
   if (shop.turns.has(turnId)) return shop.turns.get(turnId);
   const el = el_('section', 'chat-turn');
   el.dataset.turnId = turnId;
+  if (turnId === inspectorTurnId) el.classList.add('inspected');
   const saved = record || {id: turnId, type: 'turn', source, user: userText, status: 'pending',
     timestamp: new Date(time || Date.now()).toISOString(), cards: [], receipts: []};
   if (saved.user) {
@@ -358,7 +370,11 @@ function shoppingTurn(turnId, {userText = '', source = 'text', time = null} = {}
     el.append(entry);
   }
   shopEl.chatMessages.appendChild(el);
-  const turn = {id: turnId, el, record: saved, owner: getUserId()};
+  // Clicking a turn in the chat shows its trace in the inspector (not its buttons or links).
+  el.addEventListener('click', event => {
+    if (!event.target.closest('button, a, input, select, textarea, summary')) inspectorSelect(turnId);
+  });
+  const turn ={id: turnId, el, record: saved, owner: getUserId(), generation: shop.generation};
   shop.turns.set(turnId, turn);
   if (!record) {
     el.append(turnActivityNode());
@@ -417,7 +433,7 @@ function shoppingTurnFinish(turnId, {status = 'answered', reply = '', agent = ''
     if (open.view === 'orders') shoppingOrders();
     else cartDialogShow({confirm: shoppingPendingCheckout()});
   }
-  chatScroll(turn.el === shopEl.chatMessages.lastElementChild);
+  chatScroll();
   const placed = (trace?.steps || []).find(step => step.kind === 'tool' && step.name === 'create_order'
     && step.status === 'done' && step.result?.status === 'placed');
   // A turn can teach Siru something new (memory/extractor.py). Voice saves it
@@ -656,7 +672,7 @@ function turnReceipt(turn, snapshot) {
   turn.el.append(shoppingBillMessage(snapshot, time));
   turn.record.receipts = [...(turn.record.receipts || []), {snapshot, timestamp: time}];
   turnSave(turn);
-  chatScroll(turn.el === shopEl.chatMessages.lastElementChild);
+  chatScroll();
 }
 
 // What the card shows, saved as-is in the chat history (a receipt of that moment).
@@ -781,7 +797,8 @@ function shoppingOfferCard(card, time) {
   const {entry} = chatEntry({label: 'Pharmacy', time, className: 'card-entry'});
   const box = el_('div', 'chat-card offer-card');
   box.dataset.product = card.product.name;
-  box.append(el_('div', 'card-eyebrow', 'Picked for you'));
+  // Shown once the user chose this pharmacy (from the list, or by naming it).
+  box.append(el_('div', 'card-eyebrow', 'Your pharmacy'));
   const store = el_('div', 'card-store');
   store.append(Object.assign(el_('span', 'card-store-icon'), {ariaHidden: 'true'}));
   store.lastChild.append(icon('store'));
@@ -798,7 +815,20 @@ function shoppingOfferCard(card, time) {
   if (card.note) box.append(el_('p', 'card-note', card.note));
   const add = el_('button', 'card-action', 'Add to cart');
   add.type = 'button';
-  add.onclick = () => shoppingSubmit(`Add ${card.product.name} to my cart`);
+  // "Add it": the offer this card shows - that listing (its product and
+  // pharmacy ids), the same as saying "yes". Before, it sent "Add <name> to my
+  // cart", which picked the pharmacy again (the cart's, else the nearest) - not
+  // necessarily this one. Only the latest offer card can: an older one's offer
+  // is gone (the server lets it go on any other turn), so it says so instead.
+  add.onclick = () => {
+    const offers = [...shopEl.chatMessages.querySelectorAll('.offer-card')];
+    if (offers.at(-1) !== box) {
+      add.disabled = true;
+      box.append(el_('p', 'card-note', 'This offer has been replaced - ask for it again to add it.'));
+      return;
+    }
+    shoppingSubmit('Add it to my cart');
+  };
   box.append(add);
   if (card.alternatives?.length) {
     const also = card.alternatives.map(a => `${a.name}${a.distanceKm != null ? ` (${a.distanceKm} km)` : ''} ${money(a.pricePaise)}`);
@@ -1199,20 +1229,31 @@ function shoppingChoicesCard(card, time) {
 
 async function shoppingPrepareBooking(doctor, slot, dateLabel) {
   if (shop.busy || !getUserId()) return;
+  const owner = getUserId();
+  const generation = shop.generation;
   const turnId = crypto.randomUUID();
   shop.busy = true;
   shoppingControls();
-  shoppingTurn(turnId, {userText: `Book ${doctor.name}, ${dateLabel} at ${slot.label}`, source: 'text'});
+  const turn = shoppingTurn(turnId, {userText: `Book ${doctor.name}, ${dateLabel} at ${slot.label}`, source: 'text'});
+  const reply = 'Please check the booking below and confirm it. Nothing is booked until you do.';
   try {
     const data = await apiFetch('/v1/actions/bookings', {method: 'POST', body: JSON.stringify({
       doctor_code: doctor.code, start_time: slot.startTime, mode: slot.mode || null})});
-    shoppingTurnFinish(turnId, {reply: 'Please check the booking below and confirm it. Nothing is booked until you do.',
-      cards: [data.card]});
+    if (generation !== shop.generation) {
+      // The user changed meanwhile: the prepared booking goes to its owner's history only.
+      Object.assign(turn.record, {status: 'answered', reply, cards: [data.card]});
+      userSaveMessage(owner, turn.record);
+      return;
+    }
+    shoppingTurnFinish(turnId, {reply, cards: [data.card]});
   } catch (err) {
+    if (generation !== shop.generation) return;
     shoppingTurnFinish(turnId, {status: 'failed', reply: `Couldn't prepare that booking. ${pharmacyError(err)}`});
   } finally {
-    shop.busy = false;
-    shoppingControls();
+    if (generation === shop.generation) {
+      shop.busy = false;
+      shoppingControls();
+    }
   }
 }
 
@@ -1549,7 +1590,9 @@ const MEMORY_STORES = {redis: 'Redis', app_db: 'App database'};
 
 // A trace step (tracing.py) as its row. `calls` are the streamed tool calls
 // (plane, tables) of the turn, matched to its tool steps in order.
-function activityStep(step, calls = [], checkpoints = []) {
+// `agents` are the turn's agent steps: a tool that started inside one's
+// reported window (at_ms .. ended_at_ms) ran in that agent.
+function activityStep(step, calls = [], checkpoints = [], agents = []) {
   if (step.kind === 'route') {
     const target = step.next === 'end' ? 'answered directly' : (step.next ? `→ ${step.next}` : '');
     return inspectorRow('ROUTE', {name: ROUTE_LABELS[step.name] || step.name, time: activityMs(step.duration_ms),
@@ -1599,6 +1642,31 @@ function activityStep(step, calls = [], checkpoints = []) {
     return inspectorRow('DATA', {name: 'database', tone: 'state',
       extra: tableChips(step.tables_read || [], step.tables_written || [])});
   }
+  if (step.kind === 'location') {
+    // The nearest-pharmacy ranking (nearby.py): what it measured from and how many
+    // stores had coordinates - not a tool call. Outside development: the counts only.
+    const none = step.name === 'none';
+    const nearest = (step.nearest || []).slice(0, 5)
+      .map(s => `${s.store}${s.distance_km != null ? ` ${s.distance_km} km` : ''}`).join(', ');
+    return inspectorRow('LOCATION', {name: none ? 'no location' : step.name, tone: none ? 'warn' : 'state',
+      badges: [step.stores_located != null
+        && el_('span', 'trace-tag', `${step.stores_located} of ${step.stores_queried ?? '?'} stores located`)],
+      detail: nearest});
+  }
+  if (step.kind === 'confirmation') {
+    // What a "yes" may act on (offers.py): asked, used, or let go - and why.
+    const what = {purchase: 'purchase confirmation', choose_pharmacy: 'pharmacy list'}[step.confirmation]
+      || step.confirmation || 'confirmation';
+    return inspectorRow('CONFIRM', {name: `${what} ${step.name}`, tone: step.name === 'invalidated' ? 'warn' : 'state',
+      badges: [step.reason && el_('span', 'trace-tag', step.reason)],
+      detail: [step.product, step.pharmacy].filter(Boolean).join(' · ')});
+  }
+  if (step.kind === 'transcript') {
+    // What the speech recogniser finalised for a voice turn, before anything acted on it.
+    return inspectorRow('HEARD', {name: step.via ? `${step.name} · ${step.via}` : step.name,
+      badges: [step.overlap && el_('span', 'trace-tag', 'said over Siru'), step.language && el_('span', 'trace-tag', step.language)],
+      detail: step.text || ''});
+  }
   // a tool
   const index = calls.findIndex(call => call.name === step.name && !call.used);
   const call = index >= 0 ? calls[index] : null;
@@ -1617,9 +1685,13 @@ function activityStep(step, calls = [], checkpoints = []) {
   const chips = tableChips(call?.tables_read || step.tables_read, call?.tables_written || step.tables_written);
   if (chips) extra.append(chips);
   if (io) extra.append(io);
+  const agent = step.at_ms == null ? null : agents.find(a => a.at_ms != null && step.at_ms >= a.at_ms
+    && (a.ended_at_ms == null || step.at_ms <= a.ended_at_ms));
   return inspectorRow('TOOL', {name: step.name, tone: ['error', 'timeout'].includes(step.status) ? 'error' : '',
     badges: [planeBadge(call?.plane), statusBadge(step.status)], time: activityMs(step.duration_ms ?? call?.ms),
-    detail: step.by === 'model' ? 'called by the model' : 'called directly', extra: extra.children.length ? extra : null});
+    detail: [step.by === 'model' ? 'called by the model' : 'called directly', agent ? `in ${agent.name}` : '',
+      step.at_ms != null ? `at +${activityMs(step.at_ms)}` : ''].filter(Boolean).join(' · '),
+    extra: extra.children.length ? extra : null});
 }
 
 function traceFooter(trace) {
@@ -1667,13 +1739,17 @@ function activityEntry({turn_id, user, timestamp, trace, source = 'text', reply 
   summary.append(top, el_('span', 'activity-question', user ? `“${user}”` : 'Siru'), meta);
   const calls = (trace.io?.calls || []).map(call => ({...call}));
   const checkpoints = [...(trace.io?.checkpoints || [])];
+  const agents = (trace.steps || []).filter(step => step.kind === 'agent');
   const list = el_('ol', 'trace-rows');
-  (trace.steps || []).forEach(step => list.append(activityStep(step, calls, checkpoints)));
+  (trace.steps || []).forEach(step => list.append(activityStep(step, calls, checkpoints, agents)));
+  if (!tools.length) list.append(el_('li', 'trace-empty', 'No tool calls for this turn.'));
   if (reply) list.append(inspectorRow('OUT', {name: 'text', detail: reply.length > 160 ? `${reply.slice(0, 160)}…` : reply}));
   for (const kind of card_kinds) list.append(inspectorRow('OUT', {name: `card · ${kind}`}));
   const jump = el_('button', 'link-btn activity-jump', 'Show in chat');
   jump.type = 'button';
   jump.onclick = () => shoppingShowTurn(turn_id);
+  // Opening a card makes it the inspector's selected turn.
+  panel.addEventListener('toggle', () => { if (panel.open && inspectorTurnId !== turn_id) inspectorSelect(turn_id); });
   panel.append(summary, list, traceFooter(trace));
   if (trace.truncated) panel.append(el_('p', 'muted small', 'Inputs and results were too large to send over voice.'));
   panel.append(jump);
@@ -1745,20 +1821,22 @@ function inspectorTables(items) {
   return [...tables.values()].sort((a, b) => (b.writes > 0) - (a.writes > 0) || a.name.localeCompare(b.name));
 }
 
+function dataRow(t) {
+  const row = el_('div', `data-row${t.writes ? ' written' : ''}`);
+  const head = el_('div', 'data-head');
+  head.append(el_('code', 'data-name', t.name));
+  for (const plane of t.planes) head.append(planeBadge(plane));
+  const counts = el_('span', 'data-counts');
+  if (t.reads) counts.append(el_('span', 'table-chip', `R ${t.reads}`));
+  if (t.writes) counts.append(el_('span', 'table-chip write', `W ${t.writes}`));
+  head.append(counts);
+  row.append(head, el_('p', 'data-tools', [...t.tools].join(' · ')));
+  return row;
+}
+
 function dataRender(items) {
   const tables = inspectorTables(items);
-  shopEl.dataList.replaceChildren(...tables.map(t => {
-    const row = el_('div', `data-row${t.writes ? ' written' : ''}`);
-    const head = el_('div', 'data-head');
-    head.append(el_('code', 'data-name', t.name));
-    for (const plane of t.planes) head.append(planeBadge(plane));
-    const counts = el_('span', 'data-counts');
-    if (t.reads) counts.append(el_('span', 'table-chip', `R ${t.reads}`));
-    if (t.writes) counts.append(el_('span', 'table-chip write', `W ${t.writes}`));
-    head.append(counts);
-    row.append(head, el_('p', 'data-tools', [...t.tools].join(' · ')));
-    return row;
-  }));
+  shopEl.dataList.replaceChildren(...tables.map(dataRow));
   shopEl.dataEmpty.hidden = tables.length > 0;
   shopEl.dataCount.textContent = tables.length;
   shopEl.dataVoiceNote.hidden = !items.some(item => item.trace && !item.trace.io && item.source === 'voice');
@@ -1778,6 +1856,7 @@ function inspectorSummary() {
   const tokens = reported.reduce((n, item) => n + (item.trace.usage.tokens_in || 0) + (item.trace.usage.tokens_out || 0), 0);
   const cached = reported.reduce((n, item) => n + (item.trace.usage.tokens_cached || 0), 0);
   const unreported = items.reduce((n, item) => n + (item.trace.usage?.tokens_unreported || 0), 0);
+  shopEl.statMemory.textContent = steps.filter(step => step.kind === 'memory').length;
   shopEl.statTools.textContent = tools.length;
   shopEl.statToolsSplit.textContent = tools.length ? `${direct} direct · ${tools.length - direct} by model` : '';
   shopEl.statTables.textContent = tables.length;
@@ -1806,6 +1885,109 @@ function activityCounts() {
   inspectorSummary();
 }
 
+// ---------- Inspector: the selected turn (Data / Memory / AI layer) ----------
+//
+// One turn at a time: the latest when a turn arrives, or the one picked in the
+// chat or the Tool calls list. Everything shown is that turn's own trace.
+let inspectorTurnId = null;
+// The turn being streamed (typed): its steps so far, until its trace is saved.
+let inspectorLive = null;
+const AI_STEP_KINDS = new Set(['transcript', 'route', 'direct_tool', 'agent', 'llm', 'guard', 'location',
+  'confirmation', 'checkpoint']);
+
+function inspectorItems() {
+  const items = getUserId() ? userRead(activityKey(), []).filter(item => item.kind !== 'noise' && item.trace) : [];
+  return inspectorLive && !items.some(item => item.turn_id === inspectorLive.turn_id) ? [...items, inspectorLive] : items;
+}
+
+function inspectorSelect(turnId, {tab = null} = {}) {
+  inspectorTurnId = turnId;
+  for (const node of shopEl.chatMessages.querySelectorAll('.chat-turn.inspected')) node.classList.remove('inspected');
+  if (turnId) shopEl.chatMessages.querySelector(`.chat-turn[data-turn-id="${CSS.escape(turnId)}"]`)?.classList.add('inspected');
+  for (const entry of shopEl.activityList.querySelectorAll('.agent-activity[data-turn-id]')) {
+    entry.classList.toggle('selected', entry.dataset.turnId === turnId);
+    if (entry.dataset.turnId !== turnId) continue;
+    entry.open = true;
+    // Into view within the Tool calls list only - never scrolling the page or the chat.
+    const box = shopEl.toolsTab.getBoundingClientRect();
+    const at = entry.getBoundingClientRect();
+    if (box.height && (at.top < box.top || at.top > box.bottom - 40)) shopEl.toolsTab.scrollTop += at.top - box.top - 8;
+  }
+  if (tab) panelShow(tab);
+  inspectorTurnRender();
+}
+
+function turnSectionHead(title, count) {
+  const head = el_('div', 'turn-section-head');
+  head.append(el_('h3', '', title), el_('span', 'pill', String(count)));
+  return head;
+}
+
+function inspectorTurnRender() {
+  const items = inspectorItems();
+  const index = items.findIndex(item => item.turn_id === inspectorTurnId);
+  const item = index >= 0 ? items[index] : null;
+  const bar = shopEl.inspectorTurn;
+  bar.replaceChildren();
+  if (!item) {
+    bar.append(el_('span', 'muted small', inspectorTurnId ? 'No trace was recorded for this turn.'
+      : 'No turns yet. Send a message and every step Siru takes shows up here.'));
+  } else {
+    const step = delta => {
+      const button = el_('button', 'icon-btn turn-nav', delta < 0 ? '‹' : '›');
+      button.type = 'button';
+      button.setAttribute('aria-label', delta < 0 ? 'Previous turn' : 'Next turn');
+      button.disabled = !items[index + delta];
+      button.onclick = () => inspectorSelect(items[index + delta].turn_id);
+      return button;
+    };
+    const what = el_('div', 'turn-what');
+    const top = el_('span', 'activity-top');
+    top.append(el_('strong', '', `Turn ${index + 1} of ${items.length}`),
+      el_('span', `activity-source${item.source === 'voice' ? ' voice' : ''}`, item.source === 'voice' ? 'Voice' : 'Chat'));
+    if (item.live) top.append(statusBadge('running'));
+    else if (item.trace.failed) top.append(statusBadge('failed'));
+    else if (item.trace.agent) top.append(el_('code', 'agent-chip', item.trace.agent));
+    if (item.trace.total_ms != null) top.append(el_('span', 'activity-time', activityMs(item.trace.total_ms)));
+    what.append(top, el_('span', 'activity-question', item.user ? `“${item.user}”` : 'Siru'));
+    bar.append(step(-1), what, step(1));
+  }
+  const steps = item?.trace.steps || [];
+
+  // Data: the tables this turn read and wrote, by system.
+  const tables = item ? inspectorTables([item]) : [];
+  shopEl.turnData.replaceChildren(turnSectionHead('This turn', tables.length));
+  if (tables.length) {
+    const list = el_('div', 'data-list');
+    list.append(...tables.map(dataRow));
+    shopEl.turnData.append(list);
+  } else {
+    shopEl.turnData.append(el_('p', 'turn-empty', item && item.source === 'voice' && !item.trace.io
+      ? "Voice turns don't report their tables." : 'No data read or written in this turn.'));
+  }
+
+  // Memory: what this turn read from or saved to short-term (Redis) and long-term (app database) memory.
+  const memory = steps.filter(s => s.kind === 'memory');
+  shopEl.turnMemory.replaceChildren(turnSectionHead('This turn', memory.length));
+  if (memory.length) {
+    const list = el_('ol', 'trace-rows');
+    memory.forEach(s => list.append(activityStep(s)));
+    shopEl.turnMemory.append(list);
+  } else shopEl.turnMemory.append(el_('p', 'turn-empty', 'No memory read or written in this turn.'));
+
+  // AI layer: routing, the agent, model calls, guards and the checkpoint, in order.
+  const ai = steps.filter(s => AI_STEP_KINDS.has(s.kind));
+  shopEl.aiCount.textContent = ai.length;
+  shopEl.turnAi.replaceChildren(turnSectionHead('This turn', ai.length));
+  if (ai.length) {
+    const list = el_('ol', 'trace-rows');
+    const checkpoints = [...(item.trace.io?.checkpoints || [])];
+    ai.forEach(s => list.append(activityStep(s, [], checkpoints)));
+    shopEl.turnAi.append(list);
+  } else shopEl.turnAi.append(el_('p', 'turn-empty', 'No AI layer steps reported for this turn.'));
+  if (item && !item.live) shopEl.turnAi.append(traceFooter(item.trace));
+}
+
 function activityRender(item) {
   shopEl.activityList.prepend(item.kind === 'noise' ? noiseEntry(item) : activityEntry(item));
   activityCounts();
@@ -1826,6 +2008,8 @@ function activityLiveStart(turn) {
   panel.append(summary, list);
   shopEl.activityList.prepend(panel);
   shopEl.activityEmpty.hidden = true;
+  inspectorLive = {turn_id: turn.id, user: turn.record.user, source: 'text', live: true, trace: {steps: []}};
+  inspectorSelect(turn.id);
   return {panel, list, rows: new Map()};
 }
 
@@ -1836,10 +2020,16 @@ function activityLiveStep(live, step) {
   if (earlier) earlier.replaceWith(row);
   else live.list.append(row);
   if (step.id != null) live.rows.set(step.id, row);
+  const steps = inspectorLive?.trace.steps;
+  if (!steps || inspectorLive.turn_id !== live.panel.dataset.turnId) return;
+  const at = step.id != null ? steps.findIndex(s => s.id === step.id) : -1;
+  if (at >= 0) steps[at] = step; else steps.push(step);
+  if (inspectorTurnId === inspectorLive.turn_id) inspectorTurnRender();
 }
 
 function activityLiveEnd(live) {
   live?.panel.remove();
+  if (inspectorLive && inspectorLive.turn_id === live?.panel.dataset.turnId) inspectorLive = null;
 }
 
 // A failed turn's trace from its streamed steps: the model calls counted as
@@ -1868,12 +2058,15 @@ function shoppingActivityAdd(turn, trace) {
   const saved = userRead(activityKey(), []).filter(entry => entry.turn_id !== turn.id);
   userWrite(activityKey(), [...saved, item].slice(-ACTIVITY_LIMIT));
   activityRender(item);
+  inspectorSelect(turn.id);
 }
 
 function activityRestore() {
   shopEl.activityList.replaceChildren();
   if (getUserId()) userRead(activityKey(), []).forEach(activityRender);
   activityCounts();
+  inspectorLive = null;
+  inspectorSelect(inspectorItems().at(-1)?.turn_id || null);
 }
 
 function flash(node) {
@@ -1884,7 +2077,7 @@ function flash(node) {
 
 // The reply's tools link: open the panel at that turn's entry.
 function shoppingShowActivity(turnId) {
-  panelShow('tools');
+  inspectorSelect(turnId, {tab: 'tools'});
   const entry = shopEl.activityList.querySelector(`.agent-activity[data-turn-id="${CSS.escape(turnId)}"]`);
   if (!entry) return;
   entry.open = true;
@@ -1902,9 +2095,9 @@ function shoppingShowTurn(turnId) {
   flash(turn.el);
 }
 
-// The panel has three tabs: the turn-by-turn log, the tables those turns
-// touched, and what Siru remembers.
-const PANEL_TABS = ['tools', 'data', 'memory'];
+// The panel has four tabs: the turn-by-turn log, the tables those turns
+// touched, what Siru remembers, and the selected turn's AI layer.
+const PANEL_TABS = ['tools', 'data', 'memory', 'ai'];
 
 function panelShow(tab = 'tools', {toggle = false} = {}) {
   const panel = shopEl.activityPanel;
@@ -1925,6 +2118,9 @@ shopEl.activityBtn.onclick = () => panelShow('tools', {toggle: true});
 shopEl.toolsTabBtn.onclick = () => panelShow('tools');
 shopEl.dataTabBtn.onclick = () => panelShow('data');
 shopEl.memoryTabBtn.onclick = () => panelShow('memory');
+shopEl.aiTabBtn.onclick = () => panelShow('ai');
+// The summary cards open their view.
+for (const stat of document.querySelectorAll('.inspector-stats .stat[data-tab]')) stat.onclick = () => panelShow(stat.dataset.tab);
 shopEl.activityClose.onclick = () => shopEl.activityPanel.classList.remove('open');
 
 // ---------- voice turns from the worker (TURN_TOPIC) ----------
@@ -1946,6 +2142,8 @@ function shoppingMemoryEvent({turn_id, status = 'saved', count = 0, short_term =
   if (item) {
     item.trace.steps = [...(item.trace.steps || []), ...steps];
     userWrite(activityKey(), saved);
+    inspectorSummary();
+    if (turn_id === inspectorTurnId) inspectorTurnRender();
   }
   const rows = shopEl.activityList.querySelector(`.agent-activity[data-turn-id="${CSS.escape(turn_id)}"] .trace-rows`);
   for (const step of steps) rows?.append(activityStep(step));
@@ -1974,12 +2172,21 @@ function shoppingVoiceError({stage = 'other', reason = 'unavailable', status = n
 function shoppingVoiceEvent(message) {
   if (!message || !getUserId()) return;
   if (message.type === 'turn.start') {
+    // The profile just switched and the page isn't reset yet: the previous user's call.
+    if (shop.currentUser !== getUserId()) return;
     console.info('siru: voice transcript received', {turn: message.turn_id, language: message.language_code || null});
     shoppingEnsureSession();
     shoppingLivePreview('');
     shoppingTurn(message.turn_id, {userText: message.user_text, source: 'voice'});
     setVoiceStatus('Processing...');
   } else if (message.type === 'turn.result') {
+    // Only a turn this user started since the last profile switch: an earlier
+    // user's late result is dropped, never recreated as this user's turn.
+    const turn = shop.turns.get(message.turn_id);
+    if (!turn || turn.generation !== shop.generation || turn.owner !== getUserId()) {
+      console.info('siru: stale voice reply dropped', {turn: message.turn_id});
+      return;
+    }
     console.info('siru: voice reply generated', {turn: message.turn_id, agent: message.agent || message.trace?.agent || null});
     shoppingTurnFinish(message.turn_id, message);
   } else if (message.type === 'turn.memory') {

@@ -1,4 +1,4 @@
-/* Dashboard shell: the three-column layout, the top bar, the conversation
+/* Dashboard shell: the two-column layout, the top bar, the conversation
    and the inspector. Loaded after style.css, which still owns the pieces
    inside them (chat bubbles, cards, activity steps, memory items). */
 
@@ -10,7 +10,8 @@
   --accent: #6d28d9;
   --accent-soft: #f5f3ff;
   --radius: 14px;
-  --inspector: 380px;
+  /* The inspector is half the screen: a workspace, not a sidebar. */
+  --inspector: minmax(0, 1fr);
 }
 
 body {
@@ -213,7 +214,7 @@ details.card[open] > summary::after { content: ''; transform: translateY(2px) ro
 .eyebrow-accent { color: var(--accent); }
 .inspector-head h2 { margin: 4px 0 2px; font-size: 17px; font-weight: 700; letter-spacing: -.015em; }
 .inspector-sub { margin: 0; font-size: 12px; color: var(--ink-soft); }
-.inspector-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 14px 0 10px; }
+.inspector-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 14px 0 10px; }
 .stat { display: flex; flex-direction: column; min-width: 0; padding: 10px 12px; border: 1px solid var(--line-soft);
   border-radius: 12px; background: var(--surface-2); }
 .stat strong { font-size: 22px; font-weight: 700; line-height: 1.15; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
@@ -291,9 +292,6 @@ details.card[open] > summary::after { content: ''; transform: translateY(2px) ro
 .data-tools { margin: 4px 0 0; font-family: var(--mono); font-size: 11px; color: var(--ink-soft); overflow-wrap: anywhere; }
 
 /* ---------- narrower screens ---------- */
-@media (max-width: 1400px) {
-  :root { --inspector: 340px; }
-}
 @media (max-width: 1180px) {
   .card.chat-card { min-height: 60vh; }
 }
@@ -352,6 +350,16 @@ details.card[open] > summary::after { content: ''; transform: translateY(2px) ro
 .location-form { display: flex; flex-direction: column; gap: 6px; margin: 14px 0 0; }
 .location-form textarea, .location-form input, .location-form select { font: inherit; padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: 8px; }
 .location-form button[type=submit] { align-self: flex-start; margin-top: 6px; }
+/* The places found for a typed address, to confirm one (location-ui.js). */
+.location-geocode { margin-top: 10px; padding: 12px; border: 1px solid var(--line-soft); border-radius: 10px; display: flex; flex-direction: column; gap: 8px; }
+.location-geocode-head { margin: 0; font-weight: 600; font-size: 13.5px; }
+.location-geocode-list { display: flex; flex-direction: column; gap: 6px; }
+.location-geocode-option { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; cursor: pointer; }
+.location-geocode-option input { margin-top: 3px; }
+.location-geocode-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.location-geocode-text strong { font-weight: 500; }
+.location-geocode-use { align-self: flex-start; border: 0; border-radius: 10px; padding: 9px 14px; background: var(--accent); color: white; font-weight: 600; cursor: pointer; }
+.location-geocode-use:hover { background: #5b21b6; }
 
 /* Order progress in My orders (frontend/shopping.js orderTimeline) */
 .order-timeline { display: flex; flex-wrap: wrap; gap: 4px 0; list-style: none; margin: 4px 0; padding: 0; font-size: 11px; }
@@ -674,3 +682,74 @@ html.shop-open, html.shop-open body { overflow: hidden; }
 .order-meta { margin: 0; }
 /* The merchant assistant's microphone sits between the input and Ask, like the pharmacy chat's. */
 .merchant-assistant .ask-form .mic-btn { flex-shrink: 0; }
+
+/* ---------- the half-screen inspector ---------- */
+/* Summary cards are buttons: each opens its view. */
+.inspector-stats .stat { text-align: left; font: inherit; color: inherit; cursor: pointer; transition: border-color .15s, background .15s; }
+.inspector-stats .stat:hover { border-color: #ddd6fe; background: var(--accent-soft); }
+.stat small { font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--accent); }
+.stat em b { font-weight: 700; }
+
+/* The selected turn: which turn the Data / Memory / AI layer views are about. */
+.inspector-turn { display: flex; align-items: center; gap: 8px; margin: -4px 0 12px; padding: 8px 10px;
+  border: 1px solid #e9d5ff; border-radius: 12px; background: #faf8ff; min-height: 44px; }
+.inspector-turn .turn-what { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.inspector-turn .activity-question { font-size: 13px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.inspector-turn .agent-chip { padding: 1px 7px; border-radius: 6px; font-family: var(--mono); font-size: 10.5px; background: #f4f0ff; color: var(--accent-strong); }
+.turn-nav { flex: none; font-size: 18px; line-height: 1; border-color: var(--line-soft); background: #fff; }
+.turn-section { margin-bottom: 16px; }
+.turn-section .trace-rows { border: 1px solid var(--line-soft); border-radius: 12px; overflow: hidden; background: #fff; }
+.turn-section-head, .inspector-subhead { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+.turn-section-head h3, .inspector-subhead { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
+.turn-section-head h3 { margin: 0; }
+.inspector-subhead { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.turn-empty, .trace-empty { margin: 0; padding: 12px; border: 1px dashed var(--line-soft); border-radius: 12px;
+  font-size: 12.5px; color: var(--ink-soft); background: var(--surface-2); }
+.trace-empty { border: 0; border-bottom: 1px solid #f0f1f5; border-radius: 0; list-style: none; }
+
+/* The selected turn, in the chat and in the Tool calls list. */
+.chat-turn { cursor: default; border-radius: 12px; transition: box-shadow .15s; }
+.chat-turn.inspected { box-shadow: inset 3px 0 0 var(--accent); }
+.inspector .agent-activity.selected { border-color: #c4b5fd; box-shadow: 0 0 0 1px #c4b5fd; }
+
+/* A turn's steps read as one flow, top to bottom: route -> agent -> tool -> ... -> out. */
+.inspector .trace-row { position: relative; grid-template-columns: 64px minmax(0, 1fr); }
+.inspector .trace-row:not(:last-child)::after { content: ''; position: absolute; left: 19px; top: 26px; bottom: -6px;
+  border-left: 2px solid #ede9fe; }
+.inspector .trace-name { font-size: 12.5px; }
+.inspector .trace-detail { font-size: 11.5px; }
+
+/* Desktop: chat and inspector side by side, each half the width and each
+   scrolling on its own, without moving the other or the page. */
+@media (min-width: 861px) {
+  .dashboard { height: calc(100vh - 58px); height: calc(100dvh - 58px); padding-bottom: 16px; align-items: stretch; }
+  .dashboard > .card { min-height: 0; }
+  .card.chat-card { min-height: 0; }
+  .card.chat-card .chat-messages { min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain; }
+  .inspector { position: static; max-height: none; min-height: 0; }
+  .inspector > section[role="tabpanel"] { flex: 1; overscroll-behavior: contain; padding-right: 2px; }
+}
+@media (min-width: 861px) {
+  /* Compact, one row: the turn's detail gets the height. */
+  .inspector-stats .stat { padding: 8px 10px; }
+  .inspector-stats .stat strong { font-size: 19px; }
+  .inspector-stats .stat span, .inspector-stats .stat em { font-size: 11px; }
+}
+@media (max-width: 600px) {
+  .inspector-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ---------- long values wrap inside their own component ----------
+   Product, pharmacy and table names, ids, error codes and option labels can be
+   one unbroken string: they wrap where they are instead of widening the chat
+   (its own horizontal scrollbar) or the inspector's cards. */
+.card-store strong, .card-store span, .card-note, .card-action { overflow-wrap: anywhere; }
+.card-action { max-width: 100%; }
+.confirm-row > * { min-width: 0; overflow-wrap: anywhere; }
+.confirm-row > strong { text-align: right; }
+.data-name, .table-chip, .trace-id, .trace-status, .inspector .agent-chip { min-width: 0; overflow-wrap: anywhere; }
+.table-chip { max-width: 100%; }
+/* A turn's summary is a grid: without this its rows grow to their longest word. */
+.inspector .agent-activity > summary > * { min-width: 0; }
+/* The chat header's buttons and status wrap on the narrowest phones instead of spilling out. */
+.chat-heading-side { flex-wrap: wrap; flex-shrink: 1; min-width: 0; }

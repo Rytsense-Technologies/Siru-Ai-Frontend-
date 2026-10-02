@@ -1,9 +1,12 @@
 // Nearby pharmacy -> medicines -> checkout, without the chat and without any
 // model call: every step is a direct API call and deterministic code.
 //
-//   1. pharmacies  the browser's REAL location (location.js; never a default
-//                  city, never (0,0)) -> GET /v1/pharmacy/stores/nearby -> the
-//                  5 nearest open pharmacies, nearest first (ranked server-side)
+//   1. pharmacies  the ACTIVE location's own coordinates (location.js: the
+//                  device's, or the typed address the user confirmed on the map;
+//                  never a default city, never (0,0), and never the device's GPS
+//                  read behind a typed address) -> GET /v1/pharmacy/stores/nearby
+//                  -> the 5 nearest open pharmacies, nearest first (measured
+//                  server-side from provider.stores' own coordinates)
 //   2. medicines   the selected pharmacy's own shelf (GET /v1/pharmacy/products
 //                  ?store_id=), searched locally; + / - go to the server cart
 //   3. checkout    address, pharmacy, items, the server's bill, payment method
@@ -11,7 +14,8 @@
 //   4. result      the order number the server returned, or its error
 //
 // Pharmacies (per rounded location) and a pharmacy's shelf are fetched once
-// and reused; search never hits the network.
+// and reused; search never hits the network. A new location: the list is
+// measured again, and a pharmacy picked from the old one is let go.
 
 const shopFlowEl = {
   dialog: document.getElementById('shopDialog'),
@@ -41,6 +45,14 @@ function shopFlowCoords() {
   return place && place.lat != null && place.lng != null && locationValidCoords(place.lat, place.lng)
     ? {lat: place.lat, lng: place.lng}
     : null;
+}
+
+// Where the list is measured from, said under its title.
+function shopFlowOrigin() {
+  const place = siruLocation.place;
+  if (!place) return '';
+  const {title, line} = locationDescribe(place);
+  return place.source === 'device' ? 'Measured from your current location' : `Measured from ${title}: ${line}`;
 }
 
 function shopFlowHeader(title, sub = '', canGoBack = false) {
@@ -88,26 +100,43 @@ function shopFlowCartSummary() {
 
 // ---------- 1. the nearest pharmacies ----------
 
+// "Use my current location", tapped here: the device's position (the browser
+// asks), then the list measured from it.
+async function shopFlowUseDevice() {
+  const seq = ++shopFlow.seq;
+  shopFlowMessage('Getting your location…', ['Allow location access when your browser asks.']);
+  await locationRequestCurrent();
+  if (seq === shopFlow.seq) shopFlowPharmacies();
+}
+
 async function shopFlowPharmacies({fresh = false} = {}) {
   const seq = ++shopFlow.seq;
-  shopFlowHeader('Nearby pharmacies', 'The nearest open pharmacies to you');
+  shopFlowHeader('Nearby pharmacies', shopFlowOrigin() || 'The nearest open pharmacies to you');
   shopFlowEl.foot.replaceChildren();
-  let coords = shopFlowCoords();
-  if (!coords || fresh) {
+  // Only a device location is re-read ("Try again"); a typed address is never
+  // swapped for the device's GPS behind the user's back.
+  if (fresh && siruLocation.place?.source === 'device') {
     shopFlowMessage('Getting your location…', ['Allow location access when your browser asks.']);
     await locationRequestCurrent();
     if (seq !== shopFlow.seq) return;
-    coords = shopFlowCoords();
   }
+  const coords = shopFlowCoords();
   if (!coords) {
-    const code = siruLocation.error?.code || (siruLocation.permission === 'denied' ? 'denied' : '');
+    // No coordinates to measure from: the user chooses how to give them.
+    const typed = siruLocation.place?.source === 'manual';
+    const code = siruLocation.error?.code || '';
     const detail = code === 'denied'
       ? ['Location is blocked for this site. Click the lock icon next to the address bar, set Location to Allow, then try again.']
       : code ? [siruLocation.error?.message || LOCATION_ERRORS[code] || ''] : [];
-    const manual = siruLocation.place?.source === 'manual'
-      ? ["A typed address can't be measured from - only your device's location can rank pharmacies by distance."] : [];
-    shopFlowMessage('Location access is required to find nearby pharmacies.', [...detail, ...manual],
-      code === 'unsupported' || code === 'insecure' ? [] : [shopFlowButton('Try again', () => shopFlowPharmacies({fresh: true}), 'shop-btn primary')]);
+    const lines = typed
+      ? ["Your delivery address isn't on the map yet, so pharmacies can't be measured from it. Find it on the map, or use your current location.", ...detail]
+      : ['Choose where to deliver: your current location, or an address you confirm on the map.', ...detail];
+    const actions = [shopFlowButton(typed ? 'Find my address on the map' : 'Enter an address', () => {
+      shopFlowEl.dialog.close();
+      locationOpen({manual: true});
+    }, 'shop-btn primary')];
+    if (code !== 'unsupported' && code !== 'insecure') actions.push(shopFlowButton('Use my current location', shopFlowUseDevice));
+    shopFlowMessage(typed ? 'Confirm your address on the map' : 'Set your delivery location', lines, actions);
     return;
   }
   const key = `${coords.lat},${coords.lng}`;
@@ -130,13 +159,15 @@ async function shopFlowPharmacies({fresh = false} = {}) {
     shopFlowMessage('No open pharmacies with a known location near you.', ['Pharmacies appear here once their shop location is set.']);
     return;
   }
-  shopFlowHeader('Nearby pharmacies', `The ${stores.length === 1 ? 'nearest pharmacy' : `${stores.length} nearest pharmacies`} to you`);
+  shopFlowHeader(`${stores.length === 1 ? 'The nearest pharmacy' : `The ${stores.length} nearest pharmacies`}`,
+    shopFlowOrigin());
   const list = el_('ul', 'shop-list');
   for (const store of stores) {
     const row = el_('li', 'shop-store');
     const info = el_('div', 'shop-store-info');
     const top = el_('div', 'shop-store-top');
     top.append(el_('strong', '', store.name), el_('span', 'shop-badge open', 'OPEN'));
+    // The server's measured distance; a store without one is never listed (no made-up distance).
     const meta = [`${store.distanceKm} km away`, store.etaMin ? `~${store.etaMin} min` : '',
       store.deliversHere === false ? "doesn't deliver here" : ''].filter(Boolean).join(' · ');
     info.append(top, el_('span', 'shop-store-meta', meta));
@@ -466,3 +497,19 @@ shopFlowEl.dialog.addEventListener('close', () => {
   document.documentElement.classList.remove('shop-open');
 });
 document.getElementById('shopNearbyBtn')?.addEventListener('click', () => shopFlowOpen('pharmacies'));
+
+// The active location changed (another address confirmed, the device's
+// position, signed out): nothing measured from the old one is kept - the
+// pharmacy picked from that list is let go, and an open list is measured again.
+let shopFlowPlaceKey = null;
+locationSubscribe(({place}) => {
+  const key = place ? `${place.source}:${place.lat}:${place.lng}` : '';
+  if (key === shopFlowPlaceKey) return;
+  const changed = shopFlowPlaceKey !== null;
+  shopFlowPlaceKey = key;
+  if (!changed) return;
+  shopFlow.storesCache.clear();
+  // Its distance was from the old place (the cart's pharmacy is "Continue" on the new list).
+  shopFlow.pharmacy = null;
+  if (shopFlowEl.dialog.open && shopFlow.step !== 'checkout') shopFlowShow('pharmacies');
+});
