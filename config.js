@@ -6,5 +6,5 @@
 //               "Server settings" on the sign-in page, else http://<this host>:8010
 //               - the local API.
 window.SIRU_CONFIG = Object.freeze({
-  apiBaseUrl: '',
+  apiBaseUrl: 'https://13-205-123-198.sslip.io',
 });
