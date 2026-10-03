@@ -108,7 +108,7 @@ test('the nearby screen measures from the confirmed address and never reads GPS 
   await page.locator('#locationGeocodeResult').getByRole('button', {name: 'Use this place'}).click();
   await page.click('#shopNearbyBtn');
   await expect(page.locator('#shopBody')).toContainText('Arun Medicals');
-  await expect(page.locator('#shopBody')).toContainText('62.4 km away');  // the server's distance from Arakkonam
+  await expect(page.locator('#shopBody')).toContainText('62.4 km away (straight line)');  // the server's distance from Arakkonam - not a road distance
   await expect(page.locator('#shopSub')).toContainText('Measured from Home: #1/15, Gandhi Road, Palanipet, Arakkonam');
   expect(api.nearby).toEqual([{lat: 13.084, lng: 79.67}]);
   expect(await page.evaluate(() => gpsCalls)).toBe(0);

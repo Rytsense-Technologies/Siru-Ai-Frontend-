@@ -167,8 +167,9 @@ async function shopFlowPharmacies({fresh = false} = {}) {
     const info = el_('div', 'shop-store-info');
     const top = el_('div', 'shop-store-top');
     top.append(el_('strong', '', store.name), el_('span', 'shop-badge open', 'OPEN'));
-    // The server's measured distance; a store without one is never listed (no made-up distance).
-    const meta = [`${store.distanceKm} km away`, store.etaMin ? `~${store.etaMin} min` : '',
+    // The server's measured distance - a straight line from the user's location, not
+    // the road distance; a store without one is never listed (no made-up distance).
+    const meta = [`${store.distanceKm} km away (straight line)`, store.etaMin ? `~${store.etaMin} min` : '',
       store.deliversHere === false ? "doesn't deliver here" : ''].filter(Boolean).join(' · ');
     info.append(top, el_('span', 'shop-store-meta', meta));
     const where = store.area && !String(store.address || '').includes(store.area)
@@ -195,7 +196,7 @@ async function shopFlowMedicines() {
   const pharmacy = shopFlow.pharmacy;
   if (!pharmacy) return shopFlowShow('pharmacies');
   const seq = ++shopFlow.seq;
-  shopFlowHeader(pharmacy.name, `${pharmacy.distanceKm} km away${pharmacy.area ? ` · ${pharmacy.area}` : ''}`, true);
+  shopFlowHeader(pharmacy.name, `${pharmacy.distanceKm} km away (straight line)${pharmacy.area ? ` · ${pharmacy.area}` : ''}`, true);
   let products = shopFlow.shelfCache.get(pharmacy.id);
   if (!products) {
     shopFlowMessage('Loading medicines…');
@@ -359,7 +360,7 @@ async function shopFlowCheckout() {
   };
   const address = shopFlowAddressLine();
   section('Delivery address', el_('p', address ? '' : 'shop-warn', address || 'No delivery address - set your location first.'));
-  section('Pharmacy', el_('p', '', pharmacy ? `${pharmacy.name} · ${pharmacy.distanceKm} km away` : (bill.cart.items[0] && 'The pharmacy your cart is from')));
+  section('Pharmacy', el_('p', '', pharmacy ? `${pharmacy.name} · ${pharmacy.distanceKm} km away (straight line)` : (bill.cart.items[0] && 'The pharmacy your cart is from')));
   const items = el_('ul', 'shop-lines');
   for (const item of cart.items) {
     const li = el_('li', '');

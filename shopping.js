@@ -807,7 +807,7 @@ function shoppingOfferCard(card, time) {
   const where = el_('div');
   where.append(el_('strong', '', card.pharmacy.name || 'Pharmacy'));
   const facts = [
-    card.pharmacy.distanceKm != null ? `${card.pharmacy.distanceKm} km away` : '',
+    card.pharmacy.distanceKm != null ? `${card.pharmacy.distanceKm} km away (straight line)` : '',
     card.pharmacy.etaMin ? `delivery in ~${card.pharmacy.etaMin} min` : '',
   ].filter(Boolean).join(' · ');
   if (facts) where.append(el_('span', 'muted small', facts));
