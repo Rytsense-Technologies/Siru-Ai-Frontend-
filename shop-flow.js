@@ -169,7 +169,8 @@ async function shopFlowPharmacies({fresh = false} = {}) {
     top.append(el_('strong', '', store.name), el_('span', 'shop-badge open', 'OPEN'));
     // The server's measured distance - a straight line from the user's location, not
     // the road distance; a store without one is never listed (no made-up distance).
-    const meta = [`${store.distanceKm} km away (straight line)`, store.etaMin ? `~${store.etaMin} min` : '',
+    // The store's own delivery time, or "—" - never an estimate made up here.
+    const meta = [`${store.distanceKm} km away (straight line)`, store.etaMin ? `~${store.etaMin} min` : 'delivery time —',
       store.deliversHere === false ? "doesn't deliver here" : ''].filter(Boolean).join(' · ');
     info.append(top, el_('span', 'shop-store-meta', meta));
     const where = store.area && !String(store.address || '').includes(store.area)
@@ -376,7 +377,8 @@ async function shopFlowCheckout() {
     prices.append(li);
   };
   priceRow('Subtotal', money(b ? b.subtotalPaise : cart.total_paise));
-  priceRow('Delivery fee', b ? (b.deliveryPaise ? money(b.deliveryPaise) : 'FREE') : 'Calculated at dispatch');
+  // The server's bill: the store's own delivery charge, "—" when it isn't recorded (never read as free).
+  priceRow('Delivery fee', b && b.deliveryPaise != null ? (b.deliveryPaise ? money(b.deliveryPaise) : 'FREE') : '—');
   priceRow('Total', money(b ? b.totalPaise : cart.total_paise), 'shop-total');
   section('Price details', prices);
 

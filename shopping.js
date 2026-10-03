@@ -88,10 +88,10 @@ function cartBillRender(snapshot) {
   if (snapshot && snapshot.items.length) {
     const lines = [];
     if (snapshot.store) lines.push(['Pharmacy', snapshot.store]);
-    if (snapshot.delivery_paise != null) {
-      lines.push(['Subtotal', money(snapshot.subtotal_paise)]);
-      lines.push(['Delivery', snapshot.delivery_paise === 0 ? 'Free' : money(snapshot.delivery_paise)]);
-    }
+    if (snapshot.subtotal_paise != null) lines.push(['Subtotal', money(snapshot.subtotal_paise)]);
+    // The pharmacy's own delivery charge; "—" when it isn't known - never assumed free.
+    lines.push(['Delivery', snapshot.delivery_paise == null ? '—'
+      : snapshot.delivery_paise === 0 ? 'Free' : money(snapshot.delivery_paise)]);
     if (snapshot.coins_paise) lines.push(['SIRU coins (available)', money(snapshot.coins_paise)]);
     for (const [name, value] of lines) {
       const line = el_('div', 'bill-line');
@@ -753,10 +753,9 @@ function shoppingBillCard(snapshot) {
     card.append(row);
   }
   const lines = [];
-  if (snapshot.delivery_paise != null) {
-    lines.push(['Subtotal', money(snapshot.subtotal_paise)]);
-    lines.push(['Delivery', snapshot.delivery_paise === 0 ? 'Free' : money(snapshot.delivery_paise)]);
-  }
+  if (snapshot.subtotal_paise != null) lines.push(['Subtotal', money(snapshot.subtotal_paise)]);
+  lines.push(['Delivery', snapshot.delivery_paise == null ? '—'
+    : snapshot.delivery_paise === 0 ? 'Free' : money(snapshot.delivery_paise)]);
   lines.push(['Total', money(snapshot.total_paise)]);
   const summary = el_('div', 'bill-summary');
   for (const [name, value] of lines) {
@@ -808,7 +807,7 @@ function shoppingOfferCard(card, time) {
   where.append(el_('strong', '', card.pharmacy.name || 'Pharmacy'));
   const facts = [
     card.pharmacy.distanceKm != null ? `${card.pharmacy.distanceKm} km away (straight line)` : '',
-    card.pharmacy.etaMin ? `delivery in ~${card.pharmacy.etaMin} min` : '',
+    card.pharmacy.etaMin ? `delivery in ~${card.pharmacy.etaMin} min` : 'delivery time —',
   ].filter(Boolean).join(' · ');
   if (facts) where.append(el_('span', 'muted small', facts));
   store.append(where);

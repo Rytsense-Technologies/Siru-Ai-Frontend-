@@ -179,9 +179,11 @@ const pharmacyApi = {
   normalizeCart(cart, version) {
     if (!Array.isArray(cart.items)) throw new Error('The backend returned an invalid cart.');
     const items = cart.items.map(item => {
-      // The same medicine from another pharmacy has another id: fall back to its name.
-      const product = this.products.find(p => p.id === item.item_id) || this.products.find(p => p.name === item.name);
-      const price = item.unit_price_paise ?? product?.price_paise ?? null;
+      // The same medicine from another pharmacy has another id: its name and picture
+      // may come from there, never its price - another pharmacy's price isn't this one's.
+      const exact = this.products.find(p => p.id === item.item_id);
+      const product = exact || this.products.find(p => p.name === item.name);
+      const price = item.unit_price_paise ?? exact?.price_paise ?? null;
       return {id:item.item_id, name:item.name || product?.name || 'Medicine',
         qty:item.qty, price_paise:price, line_total_paise:price == null ? null : price * item.qty,
         image_url:item.image_url || product?.image_url || 'images/medicine.svg',

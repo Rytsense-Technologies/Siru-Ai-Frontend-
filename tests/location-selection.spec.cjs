@@ -38,7 +38,7 @@ test.beforeEach(async ({ page }) => {
       // Distances are the server's (measured there): a fixed one per origin here.
       const km = lat > 13 ? 62.4 : 0.3;
       return route.fulfill({headers: cors, json: {origin: {lat, lng}, unlocated: 0, stores: [
-        {id: 'store-arun', name: 'Arun Medicals', distanceKm: km, etaMin: 20, area: 'Chennai',
+        {id: 'store-arun', name: 'Arun Medicals', distanceKm: km, etaMin: 'eta' in api ? api.eta : 20, area: 'Chennai',
          address: 'Pallikaranai Main Road, Chennai, 600100', deliversHere: km <= 15, isOpen: true}]}});
     }
     return route.abort();
@@ -176,4 +176,36 @@ test('only the latest pharmacy card adds - an older one\'s offer is gone', async
   expect(sent.commands).toEqual(['Add it to my cart']);  // the latest offer, as "yes" - not "Add Dolo 650" re-picked
   expect(sent.olderDisabled).toBe(true);
   expect(sent.eyebrow).toBe('Your pharmacy');
+});
+
+// Missing values are "—" in their place - never invented, never "null"/"undefined"/"0 km"
+// (the store's delivery time and delivery charge are the client database's own).
+test('a pharmacy without a recorded delivery time keeps its row and shows a dash', async ({ page }) => {
+  api.eta = null;
+  await page.evaluate(() => signInAs('buyer-a'));
+  await typeAddress(page, '#1/15, Gandhi Road, Palanipet, Arakkonam', '631001');
+  await page.locator('#locationGeocodeResult').getByRole('button', {name: 'Use this place'}).click();
+  await page.click('#shopNearbyBtn');
+  const body = page.locator('#shopBody');
+  await expect(body).toContainText('Arun Medicals');
+  await expect(body).toContainText('62.4 km away (straight line) · delivery time —');
+  for (const bad of ['null', 'undefined', 'NaN', '~0 min']) await expect(body).not.toContainText(bad);
+});
+
+test('a delivery charge the pharmacy does not record is a dash, never "Free" or a made-up fee', async ({ page }) => {
+  const text = await page.evaluate(() => {
+    const items = [{name: 'Cetirizine 10 mg', qty: 1, price_paise: 2200, line_paise: 2200, pack: '10 tablets'}];
+    cartBillRender({items, store: 'Arun Medicals', subtotal_paise: 2200, delivery_paise: null, total_paise: 2200});
+    const known = shoppingBillCard({items, store: 'Arun Medicals', subtotal_paise: 2200, delivery_paise: 0, total_paise: 2200});
+    const unknown = shoppingBillCard({items, store: 'Arun Medicals', subtotal_paise: 2200, delivery_paise: null, total_paise: 2200});
+    return {cart: shopEl.cartBill.textContent, known: known.textContent, unknown: unknown.textContent};
+  });
+  expect(text.cart).toContain('Delivery—');
+  expect(text.unknown).toContain('Delivery—');
+  expect(text.known).toContain('DeliveryFree');
+  for (const said of [text.cart, text.unknown]) {
+    expect(said).not.toContain('Free');
+    expect(said).not.toContain('₹30');
+    expect(said).not.toContain('null');
+  }
 });
