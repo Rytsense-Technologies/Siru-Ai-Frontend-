@@ -9,7 +9,7 @@ const memoryEl = Object.fromEntries([
   "memoryList", "memoryEmpty", "memoryCount", "memoryCountTop", "memoryStatus",
   "memoryConsent", "memoryConsentNote", "stmBadge", "stmSummary", "stmRecent", "memoryCart", "memoryOrders", "memoryRefills",
   "memoryForgetAll", "householdCount", "householdStatus", "householdEmpty", "householdList",
-  "rxCount", "rxStatus", "rxList",
+  "rxCount", "rxStatus", "rxList", "addrCount", "addrStatus", "addrList", "schedCount", "schedStatus", "schedList",
 ].map(id => [id, document.getElementById(id)]));
 
 const MEMORY_LABELS = {
@@ -85,14 +85,25 @@ function memoryRender(items) {
 // counts the personal facts and the household profiles; "Nothing remembered
 // yet" only when there are neither - personal facts can be none while the
 // household section below has records.
+// One number for Long-Term Memory, on both badges (the Memory button and the
+// Inspector's Memory tab): personal facts + household profiles (their
+// allergies are part of the profile, not counted again) + saved addresses +
+// prescriptions + refill schedules - each read from its own service. Not the
+// cart, orders or short-term memory. A section not loaded counts as 0.
+function memoryLongTermCount() {
+  const rows = el => (el ? el.querySelectorAll(':scope > article').length : 0);
+  return {facts: rows(memoryEl.memoryList), members: rows(memoryEl.householdList), addresses: rows(memoryEl.addrList),
+    prescriptions: rows(memoryEl.rxList), schedules: rows(memoryEl.schedList)};
+}
+
 function memoryCountsShow() {
-  const facts = memoryEl.memoryList.children.length;
-  const members = memoryEl.householdList ? memoryEl.householdList.children.length : 0;
-  memoryEl.memoryCount.textContent = facts;
-  memoryEl.memoryCountTop.textContent = facts + members;
-  memoryEl.memoryEmpty.hidden = facts > 0;
-  memoryEl.memoryEmpty.textContent = members
-    ? 'No personal facts yet - what Siru remembers about your household is below.' : 'Nothing remembered yet.';
+  const counts = memoryLongTermCount();
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  memoryEl.memoryCount.textContent = total;
+  memoryEl.memoryCountTop.textContent = total;
+  memoryEl.memoryEmpty.hidden = counts.facts > 0;
+  memoryEl.memoryEmpty.textContent = total > counts.facts
+    ? 'No personal facts yet - your other long-term records are below.' : 'Nothing remembered yet.';
 }
 
 function memoryDuration(seconds) {
@@ -308,6 +319,8 @@ function memoryRefresh({delayed = false} = {}) {
     memoryEl.stmSummary.textContent = 'No conversation yet.';
     if (typeof householdReset === 'function') householdReset();
     if (typeof rxReset === 'function') rxReset();
+    if (typeof addrReset === 'function') addrReset();
+    if (typeof schedReset === 'function') schedReset();
     return;
   }
   if (delayed) { memoryDelayTimer = setTimeout(() => memoryRefresh(), MEMORY_DELAY_MS); return; }
@@ -320,6 +333,8 @@ function memoryRefresh({delayed = false} = {}) {
   memoryRefillsRefresh(userId);
   householdRefresh(userId);
   rxRefresh(userId);
+  addrRefresh(userId);
+  schedRefresh(userId);
   memoryLoading = pharmacyApi.memory()
     .then(data => {
       if (getUserId() !== userId) return;
@@ -470,7 +485,7 @@ function householdRender(members) {
   memoryEl.householdList.replaceChildren(...members.map(householdItem));
   memoryEl.householdCount.textContent = members.length;
   memoryEl.householdEmpty.hidden = members.length > 0;
-  if (memoryShownFor === getUserId()) memoryCountsShow();
+  memoryCountsShow();
 }
 
 async function householdNoteDelete(member, note, box, button) {
@@ -633,6 +648,7 @@ async function rxRefresh(userId = getUserId()) {
     memoryEl.rxList.replaceChildren(...list.map(rxItem));
     memoryEl.rxCount.textContent = list.length;
     memoryEl.rxStatus.textContent = list.length ? '' : 'No prescriptions saved yet - attach a photo in the chat.';
+    memoryCountsShow();
   } catch (error) {
     if (getUserId() !== userId) return;
     if (rxShownFor !== userId) { memoryEl.rxList.replaceChildren(); memoryEl.rxCount.textContent = '–'; }
@@ -647,8 +663,242 @@ async function rxDelete(rx, row, button) {
     await apiFetch(`/v1/prescriptions/me/${encodeURIComponent(rx.id)}`, {method: 'DELETE'});
     row.remove();
     memoryEl.rxCount.textContent = memoryEl.rxList.children.length;
+    memoryCountsShow();
   } catch (error) {
     button.disabled = false;
     memoryEl.rxStatus.textContent = `Couldn't delete that just now. ${pharmacyError(error)}`;
+  }
+}
+
+// ---------- saved addresses (GET/DELETE /v1/addresses/me) ----------
+//
+// Only addresses the user chose to remember (the location dialog's checkbox) -
+// never the device's location. Only the signed-in user's own.
+let addrShownFor = null;
+
+function addrReset() {
+  addrShownFor = null;
+  if (!memoryEl.addrList) return;
+  memoryEl.addrList.replaceChildren();
+  memoryEl.addrCount.textContent = '0';
+  memoryEl.addrStatus.textContent = '';
+}
+
+function addrItem(address) {
+  const row = el_('article', 'memory-item address-item');
+  const head = el_('div', 'memory-head');
+  head.append(el_('p', 'memory-text', `${address.label}: ${address.address}${address.pincode ? ` – ${address.pincode}` : ''}`));
+  const remove = el_('button', 'icon-btn memory-forget');
+  remove.append(icon('trash'));
+  remove.type = 'button';
+  remove.title = 'Delete this address';
+  remove.setAttribute('aria-label', `Delete the address: ${address.label}`);
+  remove.onclick = () => memoryDeleteRow(`/v1/addresses/me/${encodeURIComponent(address.id)}`, row, remove,
+    memoryEl.addrStatus, `Delete the saved address "${address.label}"?`);
+  head.append(remove);
+  row.append(head);
+  const meta = el_('div', 'memory-meta');
+  meta.append(el_('span', 'memory-tag long', 'Long-term'));
+  meta.append(el_('span', '', 'Saved by you'));
+  if (address.updated_at) meta.append(el_('span', '', orderWhen(address.updated_at)));
+  meta.append(el_('span', 'muted', 'Used only when you choose it - not your current location'));
+  row.append(meta);
+  return row;
+}
+
+async function addrRefresh(userId = getUserId()) {
+  if (!memoryEl.addrList) return;
+  if (!userId) { addrReset(); return; }
+  if (addrShownFor !== userId) { addrReset(); memoryEl.addrStatus.textContent = 'Loading…'; }
+  try {
+    const data = await apiFetch('/v1/addresses/me');
+    if (getUserId() !== userId) return;
+    addrShownFor = userId;
+    const list = Array.isArray(data.addresses) ? data.addresses : [];
+    memoryEl.addrList.replaceChildren(...list.map(addrItem));
+    memoryEl.addrCount.textContent = list.length;
+    memoryEl.addrStatus.textContent = list.length ? ''
+      : 'No saved addresses - tick "Remember this address" when you enter one.';
+  } catch (error) {
+    if (getUserId() !== userId) return;
+    if (addrShownFor !== userId) { memoryEl.addrList.replaceChildren(); memoryEl.addrCount.textContent = '–'; }
+    memoryEl.addrStatus.textContent = `Couldn't load saved addresses just now. ${pharmacyError(error)}`;
+  }
+  memoryCountsShow();
+}
+
+// ---------- refill schedules (GET/POST/PATCH/DELETE /v1/refill-schedules/me) ----------
+//
+// Set up by the user from one of their confirmed orders. The estimate comes
+// only from the tablets dispensed and the daily dose the user confirms from
+// the prescription - shown as unavailable until both are known. A reminder,
+// never an order.
+let schedShownFor = null;
+
+function schedReset() {
+  schedShownFor = null;
+  if (!memoryEl.schedList) return;
+  memoryEl.schedList.replaceChildren();
+  memoryEl.schedCount.textContent = '0';
+  memoryEl.schedStatus.textContent = '';
+}
+
+function schedItem(schedule) {
+  const est = schedule.estimate || {};
+  const row = el_('article', 'memory-item sched-item');
+  const head = el_('div', 'memory-head');
+  const who = schedule.patient?.kind === 'member' ? ` - for ${schedule.patient.label}` : '';
+  head.append(el_('p', 'memory-text', `${schedule.medicine}${who}`));
+  const remove = el_('button', 'icon-btn memory-forget');
+  remove.append(icon('trash'));
+  remove.type = 'button';
+  remove.title = 'Delete this refill schedule';
+  remove.setAttribute('aria-label', `Delete the refill schedule: ${schedule.medicine}`);
+  remove.onclick = () => memoryDeleteRow(`/v1/refill-schedules/me/${encodeURIComponent(schedule.id)}`, row, remove,
+    memoryEl.schedStatus, `Delete the refill schedule for ${schedule.medicine}?`);
+  head.append(remove);
+  row.append(head);
+  const meta = el_('div', 'memory-meta');
+  meta.append(el_('span', 'memory-tag long', 'Long-term'));
+  meta.append(el_('span', '', `Dispensed ${schedule.dispensed_date || '?'} · order ${schedule.order_id}`));
+  meta.append(el_('span', '', schedule.units_dispensed != null
+    ? `${schedule.units_dispensed} units (${schedule.units_source === 'user_confirmed' ? 'you confirmed' : 'pack size'})`
+    : 'units dispensed: not known'));
+  meta.append(el_('span', '', schedule.daily_units != null ? `${schedule.daily_units} a day (you confirmed)` : 'daily dose: not recorded'));
+  row.append(meta);
+  const line = est.status === 'ok'
+    ? `Supply lasts about ${est.days_supply} days - runs out around ${est.depletion_date}. Next refill: ${est.next_refill_date}`
+      + ` (${est.next_refill_source === 'recorded' ? 'recorded' : 'estimated'}).`
+    : `Estimate unavailable - ${est.reason}.`;
+  row.append(el_('p', `muted small${est.status === 'ok' ? '' : ' household-status'}`, line));
+  for (const note of est.notes || []) row.append(el_('p', 'small household-status', note));
+  row.append(schedEditForm(schedule));
+  return row;
+}
+
+function schedField(form, label, type, value, name, extra = {}) {
+  const wrap = el_('label', '', label);
+  const input = el_('input');
+  input.type = type;
+  input.name = name;
+  if (value != null) input.value = value;
+  Object.assign(input, extra);
+  wrap.append(input);
+  form.append(wrap);
+  return input;
+}
+
+function schedEditForm(schedule) {
+  const form = el_('form', 'rx-form');
+  const daily = schedField(form, 'Tablets a day, as prescribed', 'number', schedule.daily_units, 'daily_units', {min: '0.25', step: '0.25', max: '24'});
+  const units = schedField(form, 'Tablets dispensed', 'number', schedule.units_dispensed, 'units_dispensed', {min: '1', step: '1', max: '1000'});
+  const refill = schedField(form, 'Refill date from the prescriber (optional)', 'date', schedule.recorded_refill_date, 'recorded_refill_date');
+  const valid = schedField(form, 'Prescription valid until (optional)', 'date', schedule.prescription_valid_until, 'prescription_valid_until');
+  const bar = el_('div', 'rx-actions');
+  const save = el_('button', 'secondary-btn', 'Save');
+  save.type = 'submit';
+  bar.append(save);
+  form.append(bar);
+  form.onsubmit = async event => {
+    event.preventDefault();
+    const body = {};
+    if (daily.value) body.daily_units = Number(daily.value);
+    if (units.value) body.units_dispensed = Number(units.value);
+    if (refill.value) body.recorded_refill_date = refill.value;
+    if (valid.value) body.prescription_valid_until = valid.value;
+    save.disabled = true;
+    try {
+      await apiFetch(`/v1/refill-schedules/me/${encodeURIComponent(schedule.id)}`, {method: 'PATCH', body: JSON.stringify(body)});
+      await schedRefresh();
+    } catch (error) {
+      memoryEl.schedStatus.textContent = `Couldn't save that just now. ${pharmacyError(error)}`;
+      save.disabled = false;
+    }
+  };
+  return form;
+}
+
+// Set up a schedule from a line of one of the user's confirmed orders (this app's own records).
+async function schedSetupForm(userId) {
+  let orders = [];
+  try { orders = (await apiFetch('/v1/actions/demo')).orders || []; } catch { return null; }
+  const lines = orders.flatMap(order => (order.items || []).map(item => ({order, item})));
+  if (!lines.length) return el_('p', 'muted small', 'Refill reminders are set up from a confirmed order - none yet.');
+  let members = [];
+  try { members = (await apiFetch('/v1/household/me')).members || []; } catch { /* for the user only */ }
+  const form = el_('form', 'rx-form sched-setup');
+  form.append(el_('strong', '', 'Set up a refill reminder from an order'));
+  const pick = el_('select');
+  lines.forEach(({order, item}, n) => {
+    const option = el_('option', '', `${item.name} × ${item.qty} - ${order.id} (${orderWhen(order.createdAt)})`);
+    option.value = String(n);
+    pick.append(option);
+  });
+  const pickWrap = el_('label', '', 'Medicine');
+  pickWrap.append(pick);
+  form.append(pickWrap);
+  const forWhom = el_('select');
+  forWhom.append(Object.assign(el_('option', '', 'Me'), {value: ''}));
+  for (const m of members) forWhom.append(Object.assign(el_('option', '', `${m.label} (${HOUSEHOLD_LABELS[m.relationship] || m.relationship})`), {value: m.id}));
+  const whomWrap = el_('label', '', 'For');
+  whomWrap.append(forWhom);
+  form.append(whomWrap);
+  const daily = schedField(form, 'Tablets a day, as prescribed (optional - no estimate without it)', 'number', null, 'daily_units', {min: '0.25', step: '0.25', max: '24'});
+  const bar = el_('div', 'rx-actions');
+  const create = el_('button', 'secondary-btn', 'Set up reminder');
+  create.type = 'submit';
+  bar.append(create);
+  form.append(bar);
+  form.onsubmit = async event => {
+    event.preventDefault();
+    const {order, item} = lines[Number(pick.value)];
+    const body = {order_id: order.id, item_name: item.name, ...(daily.value ? {daily_units: Number(daily.value)} : {}),
+      ...(forWhom.value ? {member_id: forWhom.value} : {})};
+    create.disabled = true;
+    try {
+      await apiFetch('/v1/refill-schedules/me', {method: 'POST', body: JSON.stringify(body)});
+      if (getUserId() === userId) await schedRefresh(userId);
+    } catch (error) {
+      memoryEl.schedStatus.textContent = error?.status === 409 ? 'A reminder already exists for that order line.'
+        : `Couldn't set that up just now. ${pharmacyError(error)}`;
+      create.disabled = false;
+    }
+  };
+  return form;
+}
+
+async function schedRefresh(userId = getUserId()) {
+  if (!memoryEl.schedList) return;
+  if (!userId) { schedReset(); return; }
+  if (schedShownFor !== userId) { schedReset(); memoryEl.schedStatus.textContent = 'Loading…'; }
+  try {
+    const data = await apiFetch('/v1/refill-schedules/me');
+    if (getUserId() !== userId) return;
+    schedShownFor = userId;
+    const list = Array.isArray(data.schedules) ? data.schedules : [];
+    const setup = await schedSetupForm(userId);
+    if (getUserId() !== userId) return;
+    memoryEl.schedList.replaceChildren(...list.map(schedItem), ...(setup ? [setup] : []));
+    memoryEl.schedCount.textContent = list.length;
+    memoryEl.schedStatus.textContent = list.length ? '' : 'No refill schedules yet.';
+  } catch (error) {
+    if (getUserId() !== userId) return;
+    if (schedShownFor !== userId) { memoryEl.schedList.replaceChildren(); memoryEl.schedCount.textContent = '–'; }
+    memoryEl.schedStatus.textContent = `Couldn't load refill schedules just now. ${pharmacyError(error)}`;
+  }
+  memoryCountsShow();
+}
+
+async function memoryDeleteRow(path, row, button, status, question) {
+  if (!window.confirm(`${question} This can't be undone.`)) return;
+  button.disabled = true;
+  try {
+    await apiFetch(path, {method: 'DELETE'});
+    row.remove();
+    status.textContent = '';
+    await Promise.all([addrRefresh(), schedRefresh()]);
+  } catch (error) {
+    button.disabled = false;
+    status.textContent = `Couldn't delete that just now. ${pharmacyError(error)}`;
   }
 }

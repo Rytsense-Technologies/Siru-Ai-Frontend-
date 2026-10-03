@@ -39,6 +39,13 @@ test.beforeEach(async ({ page }) => {
     if (path.startsWith('/v1/pharmacy/orders/')) return answer(mine.siruOrders);
     if (path === '/v1/actions/demo') return answer(mine.demo);
     if (path === '/v1/concierge/refills') return answer(mine.refills === undefined ? {items: []} : mine.refills);
+    if (path === '/v1/addresses/me' && request.method() === 'GET') return answer(mine.addresses === undefined ? {addresses: []} : {addresses: mine.addresses});
+    if (path.startsWith('/v1/addresses/me/') && request.method() === 'DELETE') {
+      const id = path.split('/').pop();
+      mine.addresses = (mine.addresses || []).filter(a => a.id !== id);
+      return route.fulfill({headers: cors, json: {deleted: true, id}});
+    }
+    if (path === '/v1/refill-schedules/me' && request.method() === 'GET') return answer(mine.schedules === undefined ? {schedules: []} : {schedules: mine.schedules});
     if (path === '/v1/prescriptions/me') return answer(mine.rx === undefined ? {prescriptions: []} : mine.rx);
     if (path.startsWith('/v1/prescriptions/me/') && request.method() === 'PATCH') {
       mine.patched = JSON.parse(request.postData() || '{}');
@@ -201,7 +208,7 @@ test('"Nothing remembered yet" is not shown while household records exist', asyn
     return {empty: memoryEl.memoryEmpty.textContent, top: memoryEl.memoryCountTop.textContent};
   });
   expect(state.empty).not.toBe('Nothing remembered yet.');
-  expect(state.empty).toContain('household');
+  expect(state.empty).toContain('long-term records');
   expect(state.top).toBe('1');
 });
 
@@ -258,4 +265,65 @@ test('the emergency card shows Call 112 and Call 108 as tel: links and folded in
   expect(card.summary).toBe('Get emergency help instructions');
   expect(card.steps).toBe(2);
   expect(card.danger).toBe(true);
+});
+
+const ADDR = id => ({id, label: id === 'h' ? 'Home' : 'Other', address: id === 'h' ? '5 Pondy Bazaar, T Nagar' : 'Adyar',
+  pincode: '', lat: 13.04, lng: 80.23, source: 'user_saved', updated_at: '2026-10-03T09:00:00Z', history: []});
+const SCHED = {id: 's1', medicine: 'Amlong 5', patient: {kind: 'member', label: 'Saroja (your mother)'}, order_id: 'DEMO-1',
+  dispensed_date: '2026-09-20', units_dispensed: 30, units_source: 'catalog_pack_size', daily_units: null,
+  estimate: {status: 'unavailable', reason: "the daily dose isn't recorded - confirm it from the prescription", notes: []}};
+
+test('both Memory badges count every long-term category - and drop when one is deleted', async ({ page }) => {
+  api.set('a', {household: [member('m1', 'Saroja')], addresses: [ADDR('h'), ADDR('o')], schedules: [SCHED],
+    rx: {prescriptions: [{id: 'rx1', patient_name: 'Saroja', prescription_date: '2026-09-28', items: [], verification: 'confirmed_by_user'}]},
+    demo: {orders: [], bookings: []}, siruOrders: []});
+  page.on('dialog', dialog => dialog.accept());
+  const counts = async () => page.evaluate(() => ({tab: memoryEl.memoryCount.textContent, top: memoryEl.memoryCountTop.textContent}));
+  await page.evaluate(async () => {
+    await signInAs('a'); panelShow('memory');
+    await Promise.all([householdRefresh(), addrRefresh(), schedRefresh(), rxRefresh()]);
+  });
+  // 0 facts + 1 household profile + 2 addresses + 1 prescription + 1 refill schedule; the cart and orders are not memory.
+  await expect.poll(counts).toEqual({tab: '5', top: '5'});
+  await page.evaluate(() => document.querySelector('#addrList .memory-forget').click());
+  await expect.poll(counts).toEqual({tab: '4', top: '4'});
+});
+
+test('saved addresses and refill schedules say where they come from, and an unknown dose is not estimated', async ({ page }) => {
+  api.set('a', {addresses: [ADDR('h')], schedules: [SCHED], demo: {orders: [], bookings: []}});
+  const text = await page.evaluate(async () => {
+    await signInAs('a'); await addrRefresh(); await schedRefresh();
+    return {addr: memoryEl.addrList.textContent, sched: memoryEl.schedList.textContent};
+  });
+  expect(text.addr).toContain('Home: 5 Pondy Bazaar, T Nagar');
+  expect(text.addr).toContain('not your current location');
+  expect(text.sched).toContain('Amlong 5 - for Saroja (your mother)');
+  expect(text.sched).toContain("Estimate unavailable - the daily dose isn't recorded");
+  expect(text.sched).toContain('daily dose: not recorded');
+  expect(text.sched).toContain('Refill reminders are set up from a confirmed order - none yet.');
+});
+
+test('empty categories are honest empty states', async ({ page }) => {
+  api.set('a', {demo: {orders: [], bookings: []}});
+  const text = await page.evaluate(async () => {
+    await signInAs('a'); await addrRefresh(); await schedRefresh();
+    return {addr: memoryEl.addrStatus.textContent, sched: memoryEl.schedStatus.textContent};
+  });
+  expect(text.addr).toContain('No saved addresses');
+  expect(text.sched).toBe('No refill schedules yet.');
+});
+
+test('a saved address can be picked when the device location is blocked - labelled as saved, not current', async ({ page }) => {
+  api.set('a', {addresses: [ADDR('h')]});
+  const picked = await page.evaluate(async () => {
+    await signInAs('a');
+    locationOpen();
+    await locationSavedShow();
+    document.querySelector('#locationSaved .location-saved-pick').click();
+    return {place: {source: siruLocation.place.source, label: siruLocation.place.label}, line: locationDescribe().line,
+      turn: locationTurnContext().source};
+  });
+  expect(picked.place).toEqual({source: 'saved', label: 'Home'});
+  expect(picked.line).toContain('saved address');
+  expect(picked.turn).toBe('saved');
 });

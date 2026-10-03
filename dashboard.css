@@ -773,6 +773,11 @@ html.shop-open, html.shop-open body { overflow: hidden; }
 .rx-form label { display: grid; gap: 2px; }
 .rx-form input { min-width: 0; padding: 6px 8px; border: 1px solid var(--line-soft); border-radius: 8px; font: inherit; }
 .rx-form .rx-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.rx-form select { min-width: 0; padding: 6px 8px; border: 1px solid var(--line-soft); border-radius: 8px; font: inherit; }
+.sched-setup { margin-top: 10px; padding: 10px; border: 1px dashed var(--line-soft); border-radius: 10px; }
+.location-saved { display: grid; gap: 6px; margin: 8px 0; }
+.location-saved-pick { text-align: left; }
+.location-remember { margin: 6px 0; }
 .usual-pharmacy-card > p { font-weight: 600; }
 
 /* ---------- long values wrap inside their own component ----------

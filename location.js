@@ -69,11 +69,11 @@ function locationValidCoords(lat, lng) {
 
 // What was saved for this user, if it still has the right shape.
 function locationValidPlace(place) {
-  if (!place || typeof place !== 'object' || !['device', 'manual'].includes(place.source)) return null;
+  if (!place || typeof place !== 'object' || !['device', 'manual', 'saved'].includes(place.source)) return null;
   const hasCoords = place.lat != null && place.lng != null;
   if (hasCoords && !locationValidCoords(place.lat, place.lng)) return null;
   if (place.source === 'device' && !hasCoords) return null;
-  if (place.source === 'manual' && !String(place.address || '').trim()) return null;
+  if (['manual', 'saved'].includes(place.source) && !String(place.address || '').trim()) return null;
   return place;
 }
 
@@ -284,6 +284,8 @@ function locationDescribe(place = siruLocation.place) {
     return {title: place.label || 'Current location', line: `From your device${accuracy}`};
   }
   const where = [place.address, place.pincode].filter(Boolean).join(' – ');
+  // Saved address / device location / typed address - always said which.
+  if (place.source === 'saved') return {title: place.label || 'Saved address', line: `${where} · saved address`};
   // An address saved before it could be placed on the map: said, so nobody
   // takes distances as measured from it.
   if (place.lat == null || place.lng == null) return {title: place.label || 'Address', line: `${where} · not on the map yet`};

@@ -5,8 +5,47 @@ const locEl = Object.fromEntries([
   'locationRow', 'locationRowTitle', 'locationRowLine', 'locationChangeBtn', 'locationDialog', 'locationTitle',
   'locationCloseBtn', 'locationIntro', 'locationStatus', 'locationBlockedHelp', 'locationUseDeviceBtn',
   'locationManualBtn', 'locationManualForm', 'locationLabel', 'locationAddress', 'locationPincode',
-  'locationFormError', 'locationFindBtn', 'locationGeocodeResult',
+  'locationFormError', 'locationFindBtn', 'locationGeocodeResult', 'locationSaved', 'locationRemember',
 ].map(id => [id, document.getElementById(id)]));
+
+// The user's saved addresses (GET /v1/addresses/me), offered to pick - the
+// fallback when the device's location is blocked. Picking one is a choice for
+// this tab ("saved address"), never taken as where the user is.
+async function locationSavedShow() {
+  const box = locEl.locationSaved;
+  if (!box || !siruLocation.userId || typeof apiFetch !== 'function') return;
+  const userId = siruLocation.userId;
+  let saved = [];
+  try { saved = (await apiFetch('/v1/addresses/me')).addresses || []; } catch { saved = []; }
+  if (siruLocation.userId !== userId) return;
+  box.hidden = !saved.length;
+  box.replaceChildren(...(saved.length ? [el_('p', 'location-geocode-head', 'Use a saved address')] : []),
+    ...saved.map(a => {
+      const pick = el_('button', 'ghost-btn location-saved-pick', `${a.label}: ${a.address}`);
+      pick.type = 'button';
+      pick.onclick = () => {
+        locationSave({source: 'saved', lat: a.lat, lng: a.lng, accuracy: null, timestamp: Date.now(), label: a.label,
+          address: a.address, pincode: a.pincode || '', mapLabel: a.map_label || '', precision: a.precision || 'area'});
+        locationClose();
+      };
+      return pick;
+    }));
+}
+
+// A typed address the user ticked "Remember" for: kept on their account.
+async function locationRememberSave() {
+  const place = siruLocation.place;
+  if (!locEl.locationRemember?.checked || !place || place.source !== 'manual') return;
+  try {
+    await apiFetch('/v1/addresses/me', {method: 'POST', body: JSON.stringify({
+      label: place.label === 'Office' ? 'Work' : (place.label || 'Other'), address: place.address,
+      pincode: place.pincode || '', lat: place.lat, lng: place.lng, map_label: place.mapLabel || '',
+      precision: place.precision || ''})});
+    if (typeof addrRefresh === 'function') addrRefresh();
+  } catch (err) {
+    console.warn('siru: the address could not be saved to your account', err?.status || '');
+  }
+}
 
 let locationLastPlaceKey = null;
 
@@ -55,6 +94,7 @@ function locationOpen({manual = false} = {}) {
   locationGeocodeClear();
   locationRender();
   if (!locEl.locationDialog.open) locEl.locationDialog.showModal();
+  locationSavedShow();
   if (manual) locationManualShow();
 }
 
@@ -149,6 +189,7 @@ function locationGeocodeShow(fields, places) {
     const error = locationSetManual(fields, places[Number(picked?.value || 0)]);
     locationFormError(error);
     if (!error) {
+      locationRememberSave();
       locationGeocodeClear();
       locationClose();
     }
