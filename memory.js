@@ -583,57 +583,19 @@ function rxItem(rx) {
   const lines = el_('ul', 'rx-lines');
   for (const item of rx.items || []) {
     const line = el_('li', item.unclear ? 'rx-unclear' : '', [item.name, item.strength].filter(Boolean).join(' '));
-    if (item.unclear) line.append(' (unclear - please check)');
+    if (item.unclear) line.append(' (unclear - not read for sure)');
+    // As written on the prescription - used only for refill timing; never advice.
+    if (item.instructions) line.append(el_('span', 'muted small', ` · as written: ${item.instructions}`
+      + (item.daily_units != null ? ` (${item.daily_units} a day)` : ' (no daily count - not unambiguous)')));
     lines.append(line);
   }
   row.append(lines);
-  if (rx.verification !== 'confirmed_by_user') row.append(rxForm(rx));
+  if (rx.valid_until) row.append(el_('p', 'muted small', `Valid until ${rx.valid_until} (as written)`));
+  if ((rx.uncertain_fields || []).length) {
+    row.append(el_('p', 'small household-status', `Awaiting clarification: ${rx.uncertain_fields.map(f => RX_FIELD_WORDS[f]
+      || f.replace('items.', 'medicine ')).join(', ')} not read for sure.`));
+  }
   return row;
-}
-
-// Correct what was read, then confirm - refused by the server while anything is still uncertain.
-function rxForm(rx) {
-  const form = el_('form', 'rx-form');
-  const field = (label, value, name) => {
-    const wrap = el_('label', '', label);
-    const input = el_('input');
-    input.name = name;
-    input.value = value || '';
-    input.maxLength = name === 'prescription_date' ? 20 : 160;
-    wrap.append(input);
-    form.append(wrap);
-    return input;
-  };
-  const patient = field('Patient name', rx.patient_name, 'patient_name');
-  const date = field('Prescription date (as written)', rx.prescription_date, 'prescription_date');
-  const names = (rx.items || []).map((item, n) =>
-    field(`Medicine ${n + 1}${item.unclear ? ' (unclear)' : ''}`, [item.name, item.strength].filter(Boolean).join(' '), `item${n}`));
-  const bar = el_('div', 'rx-actions');
-  const confirm = el_('button', 'secondary-btn', 'Confirm these details');
-  confirm.type = 'submit';
-  bar.append(confirm);
-  form.append(bar);
-  form.onsubmit = async event => {
-    event.preventDefault();
-    const userId = getUserId();
-    const body = {confirm: true};
-    if (patient.value.trim()) body.patient_name = patient.value.trim();
-    if (date.value.trim()) body.prescription_date = date.value.trim();
-    if (names.length) body.items = names.map(input => ({name: input.value.trim()})).filter(item => item.name);
-    confirm.disabled = true;
-    try {
-      await apiFetch(`/v1/prescriptions/me/${encodeURIComponent(rx.id)}`, {method: 'PATCH', body: JSON.stringify(body)});
-      if (getUserId() === userId) await rxRefresh(userId);
-    } catch (error) {
-      const detail = error?.detail || error?.body?.detail || {};
-      const missing = Array.isArray(detail.uncertain_fields) ? detail.uncertain_fields : [];
-      memoryEl.rxStatus.textContent = missing.length
-        ? `Please check: ${missing.map(f => RX_FIELD_WORDS[f] || f.replace('items.', 'medicine ')).join(', ')}.`
-        : `Couldn't save that just now. ${pharmacyError(error)}`;
-      confirm.disabled = false;
-    }
-  };
-  return form;
 }
 
 async function rxRefresh(userId = getUserId()) {
@@ -760,11 +722,14 @@ function schedItem(schedule) {
   row.append(head);
   const meta = el_('div', 'memory-meta');
   meta.append(el_('span', 'memory-tag long', 'Long-term'));
+  meta.append(el_('span', '', schedule.source === 'auto_from_order' ? 'Created automatically from your order' : 'Set up by you'));
   meta.append(el_('span', '', `Dispensed ${schedule.dispensed_date || '?'} · order ${schedule.order_id}`));
-  meta.append(el_('span', '', schedule.units_dispensed != null
-    ? `${schedule.units_dispensed} units (${schedule.units_source === 'user_confirmed' ? 'you confirmed' : 'pack size'})`
-    : 'units dispensed: not known'));
-  meta.append(el_('span', '', schedule.daily_units != null ? `${schedule.daily_units} a day (you confirmed)` : 'daily dose: not recorded'));
+  const units = {user_confirmed: 'you confirmed', catalog_pack_size: 'pack size × quantity'}[schedule.units_source];
+  meta.append(el_('span', '', schedule.units_dispensed != null ? `${schedule.units_dispensed} units (${units})`
+    : 'tablets dispensed: not known'));
+  const daily = {user_confirmed: 'you confirmed', prescription: 'from your prescription'}[schedule.daily_source] || 'recorded';
+  meta.append(el_('span', '', schedule.daily_units != null ? `${schedule.daily_units} a day (${daily})` : 'daily dose: not recorded'));
+  if (schedule.prescription_valid_until) meta.append(el_('span', '', `prescription valid until ${schedule.prescription_valid_until}`));
   row.append(meta);
   const line = est.status === 'ok'
     ? `Supply lasts about ${est.days_supply} days - runs out around ${est.depletion_date}. Next refill: ${est.next_refill_date}`
@@ -772,99 +737,16 @@ function schedItem(schedule) {
     : `Estimate unavailable - ${est.reason}.`;
   row.append(el_('p', `muted small${est.status === 'ok' ? '' : ' household-status'}`, line));
   for (const note of est.notes || []) row.append(el_('p', 'small household-status', note));
-  row.append(schedEditForm(schedule));
+  const reminder = schedule.reminder || {};
+  const reminderText = {
+    scheduled: `Reminder scheduled - shown in chat from ${reminder.due_from}.`,
+    due: `Reminder due - shown in chat when you next open Siru.`,
+    delivered: `Reminder delivered${reminder.delivered_at ? ` ${orderWhen(reminder.delivered_at)}` : ''} for the ${reminder.cycle} refill.`,
+    failed: `Reminder could not be delivered for the ${reminder.cycle} refill - it will be tried again.`,
+    unavailable: `No reminder - ${reminder.reason || 'not enough information'}.`,
+  }[reminder.state];
+  if (reminderText) row.append(el_('p', 'muted small sched-reminder', reminderText));
   return row;
-}
-
-function schedField(form, label, type, value, name, extra = {}) {
-  const wrap = el_('label', '', label);
-  const input = el_('input');
-  input.type = type;
-  input.name = name;
-  if (value != null) input.value = value;
-  Object.assign(input, extra);
-  wrap.append(input);
-  form.append(wrap);
-  return input;
-}
-
-function schedEditForm(schedule) {
-  const form = el_('form', 'rx-form');
-  const daily = schedField(form, 'Tablets a day, as prescribed', 'number', schedule.daily_units, 'daily_units', {min: '0.25', step: '0.25', max: '24'});
-  const units = schedField(form, 'Tablets dispensed', 'number', schedule.units_dispensed, 'units_dispensed', {min: '1', step: '1', max: '1000'});
-  const refill = schedField(form, 'Refill date from the prescriber (optional)', 'date', schedule.recorded_refill_date, 'recorded_refill_date');
-  const valid = schedField(form, 'Prescription valid until (optional)', 'date', schedule.prescription_valid_until, 'prescription_valid_until');
-  const bar = el_('div', 'rx-actions');
-  const save = el_('button', 'secondary-btn', 'Save');
-  save.type = 'submit';
-  bar.append(save);
-  form.append(bar);
-  form.onsubmit = async event => {
-    event.preventDefault();
-    const body = {};
-    if (daily.value) body.daily_units = Number(daily.value);
-    if (units.value) body.units_dispensed = Number(units.value);
-    if (refill.value) body.recorded_refill_date = refill.value;
-    if (valid.value) body.prescription_valid_until = valid.value;
-    save.disabled = true;
-    try {
-      await apiFetch(`/v1/refill-schedules/me/${encodeURIComponent(schedule.id)}`, {method: 'PATCH', body: JSON.stringify(body)});
-      await schedRefresh();
-    } catch (error) {
-      memoryEl.schedStatus.textContent = `Couldn't save that just now. ${pharmacyError(error)}`;
-      save.disabled = false;
-    }
-  };
-  return form;
-}
-
-// Set up a schedule from a line of one of the user's confirmed orders (this app's own records).
-async function schedSetupForm(userId) {
-  let orders = [];
-  try { orders = (await apiFetch('/v1/actions/demo')).orders || []; } catch { return null; }
-  const lines = orders.flatMap(order => (order.items || []).map(item => ({order, item})));
-  if (!lines.length) return el_('p', 'muted small', 'Refill reminders are set up from a confirmed order - none yet.');
-  let members = [];
-  try { members = (await apiFetch('/v1/household/me')).members || []; } catch { /* for the user only */ }
-  const form = el_('form', 'rx-form sched-setup');
-  form.append(el_('strong', '', 'Set up a refill reminder from an order'));
-  const pick = el_('select');
-  lines.forEach(({order, item}, n) => {
-    const option = el_('option', '', `${item.name} × ${item.qty} - ${order.id} (${orderWhen(order.createdAt)})`);
-    option.value = String(n);
-    pick.append(option);
-  });
-  const pickWrap = el_('label', '', 'Medicine');
-  pickWrap.append(pick);
-  form.append(pickWrap);
-  const forWhom = el_('select');
-  forWhom.append(Object.assign(el_('option', '', 'Me'), {value: ''}));
-  for (const m of members) forWhom.append(Object.assign(el_('option', '', `${m.label} (${HOUSEHOLD_LABELS[m.relationship] || m.relationship})`), {value: m.id}));
-  const whomWrap = el_('label', '', 'For');
-  whomWrap.append(forWhom);
-  form.append(whomWrap);
-  const daily = schedField(form, 'Tablets a day, as prescribed (optional - no estimate without it)', 'number', null, 'daily_units', {min: '0.25', step: '0.25', max: '24'});
-  const bar = el_('div', 'rx-actions');
-  const create = el_('button', 'secondary-btn', 'Set up reminder');
-  create.type = 'submit';
-  bar.append(create);
-  form.append(bar);
-  form.onsubmit = async event => {
-    event.preventDefault();
-    const {order, item} = lines[Number(pick.value)];
-    const body = {order_id: order.id, item_name: item.name, ...(daily.value ? {daily_units: Number(daily.value)} : {}),
-      ...(forWhom.value ? {member_id: forWhom.value} : {})};
-    create.disabled = true;
-    try {
-      await apiFetch('/v1/refill-schedules/me', {method: 'POST', body: JSON.stringify(body)});
-      if (getUserId() === userId) await schedRefresh(userId);
-    } catch (error) {
-      memoryEl.schedStatus.textContent = error?.status === 409 ? 'A reminder already exists for that order line.'
-        : `Couldn't set that up just now. ${pharmacyError(error)}`;
-      create.disabled = false;
-    }
-  };
-  return form;
 }
 
 async function schedRefresh(userId = getUserId()) {
@@ -876,11 +758,10 @@ async function schedRefresh(userId = getUserId()) {
     if (getUserId() !== userId) return;
     schedShownFor = userId;
     const list = Array.isArray(data.schedules) ? data.schedules : [];
-    const setup = await schedSetupForm(userId);
-    if (getUserId() !== userId) return;
-    memoryEl.schedList.replaceChildren(...list.map(schedItem), ...(setup ? [setup] : []));
+    memoryEl.schedList.replaceChildren(...list.map(schedItem));
     memoryEl.schedCount.textContent = list.length;
-    memoryEl.schedStatus.textContent = list.length ? '' : 'No refill schedules yet.';
+    memoryEl.schedStatus.textContent = list.length ? ''
+      : 'No refill schedules yet - they are created automatically from your confirmed orders.';
   } catch (error) {
     if (getUserId() !== userId) return;
     if (schedShownFor !== userId) { memoryEl.schedList.replaceChildren(); memoryEl.schedCount.textContent = '–'; }

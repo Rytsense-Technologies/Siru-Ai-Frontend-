@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Siru Pharmacy — AI Assistant</title>
 <link rel="icon" type="image/svg+xml" href="images/favicon.svg">
-<link rel="stylesheet" href="style.css?v=64">
-<link rel="stylesheet" href="dashboard.css?v=64">
+<link rel="stylesheet" href="style.css?v=65">
+<link rel="stylesheet" href="dashboard.css?v=65">
 <!-- livekit-client 2.22.3, self-hosted (vendor/, Apache-2.0) - pinned, and checked against its hash. -->
 <script src="vendor/livekit-client-2.22.3/livekit-client.umd.js" integrity="sha384-G/xxtkVytOx/ia9Q8MXxM+V0ohsaY1fZAgVP3iSGTPz4wJ0s3+ulJNKXh/gnzEDZ"></script>
 </head>
@@ -235,7 +235,7 @@
       <!-- Refill schedules set up from the user's own confirmed orders (/v1/refill-schedules/me - memory.js). -->
       <div class="memory-section">
         <div class="memory-section-head"><h3><span class="memory-kind">Long-Term Memory</span> Medication &amp; refill schedules <b id="schedCount" class="memory-count">0</b></h3><span class="memory-badge memory-badge-db">App database</span></div>
-        <p class="muted small">Estimated only from the tablets dispensed and the daily dose you confirm from the prescription. A reminder - nothing is ever reordered.</p>
+        <p class="muted small">Kept automatically from your confirmed orders and saved prescriptions - estimated only from the tablets dispensed and the daily count written on the prescription. A reminder - nothing is ever reordered.</p>
         <p id="schedStatus" class="muted small" role="status"></p>
         <div id="schedList" class="memory-list"></div>
       </div>
@@ -244,7 +244,7 @@
            the date written on it, whose it is, what couldn't be read, and the user's confirmation. -->
       <div class="memory-section">
         <div class="memory-section-head"><h3><span class="memory-kind">Long-Term Memory</span> Prescriptions <b id="rxCount" class="memory-count">0</b></h3><span class="memory-badge memory-badge-db">App database</span></div>
-        <p class="muted small">Read from your photos. Check them - anything marked unclear was not read for sure. Your confirmation is not a pharmacist's check, and no doses are read.</p>
+        <p class="muted small">Saved automatically from the photos you send in chat. Anything marked unclear was not read for sure. Not a pharmacist's check; instructions are kept as written for refill timing only.</p>
         <p id="rxStatus" class="muted small" role="status"></p>
         <div id="rxList" class="memory-list"></div>
       </div>
@@ -415,18 +415,18 @@
   <form method="dialog"><button>Continue shopping</button></form>
 </dialog>
 
-<script src="config.js?v=64"></script>
-<script src="safe-dom.js?v=64"></script>
-<script src="icons.js?v=64"></script>
-<script src="users.js?v=64"></script>
-<script src="location.js?v=64"></script>
-<script src="app.js?v=64"></script>
-<script src="pharmacy-api.js?v=64"></script>
-<script src="shopping.js?v=64"></script>
-<script src="shop-flow.js?v=64"></script>
-<script src="memory.js?v=64"></script>
-<script src="location-ui.js?v=64"></script>
-<script src="merchant.js?v=64"></script>
-<script src="user-menu.js?v=64"></script>
+<script src="config.js?v=65"></script>
+<script src="safe-dom.js?v=65"></script>
+<script src="icons.js?v=65"></script>
+<script src="users.js?v=65"></script>
+<script src="location.js?v=65"></script>
+<script src="app.js?v=65"></script>
+<script src="pharmacy-api.js?v=65"></script>
+<script src="shopping.js?v=65"></script>
+<script src="shop-flow.js?v=65"></script>
+<script src="memory.js?v=65"></script>
+<script src="location-ui.js?v=65"></script>
+<script src="merchant.js?v=65"></script>
+<script src="user-menu.js?v=65"></script>
 </body>
 </html>

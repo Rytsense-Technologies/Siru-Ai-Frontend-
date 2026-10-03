@@ -235,18 +235,20 @@ const RX = {id: 'rx1', patient_name: 'Saroja', prescription_date: '2026-09-28', 
   items: [{name: 'Amlong 5', strength: '5 mg', unclear: false}, {name: 'Telma 40', strength: null, unclear: true}],
   ocr_status: 'extracted', verification: 'awaiting_user_confirmation', uncertain_fields: ['items.1']};
 
-test('a saved prescription shows its own date, the patient, the unclear line, and awaits confirmation', async ({ page }) => {
-  api.set('a', {rx: {prescriptions: [RX]}, refuse: true});
-  const text = await page.evaluate(async () => { await signInAs('a'); await rxRefresh('a'); return memoryEl.rxList.textContent; });
-  expect(text).toContain('Patient: Saroja');
-  expect(text).toContain('Prescription date: 2026-09-28');
-  expect(text).toContain('Uploaded');
-  expect(text).toContain('Telma 40 (unclear - please check)');
-  expect(text).toContain('OCR extracted - awaiting your confirmation');
-  // Confirming while a line is still uncertain: the server refuses, and the user is told what to check.
-  await page.evaluate(() => memoryEl.rxList.querySelector('form').requestSubmit());
-  await expect.poll(() => page.evaluate(() => memoryEl.rxStatus.textContent)).toBe('Please check: medicine 1.');
-  expect(api.get('a').patched).toMatchObject({confirm: true, patient_name: 'Saroja', prescription_date: '2026-09-28'});
+test('a saved prescription is shown read-only: its own date, the patient, the unclear line, awaiting clarification', async ({ page }) => {
+  api.set('a', {rx: {prescriptions: [{...RX, items: [{name: 'Amlong 5', strength: '5 mg', unclear: false, instructions: '1-0-1', daily_units: 2},
+    {name: 'Telma 40', strength: null, unclear: true}], valid_until: '2027-03-28'}]}});
+  const rx = await page.evaluate(async () => {
+    await signInAs('a'); await rxRefresh('a');
+    return {text: memoryEl.rxList.textContent, forms: memoryEl.rxList.querySelectorAll('form, input, button:not(.memory-forget)').length};
+  });
+  expect(rx.text).toContain('Patient: Saroja');
+  expect(rx.text).toContain('Prescription date: 2026-09-28');
+  expect(rx.text).toContain('Telma 40 (unclear - not read for sure)');
+  expect(rx.text).toContain('as written: 1-0-1 (2 a day)');
+  expect(rx.text).toContain('Valid until 2027-03-28');
+  expect(rx.text).toContain('Awaiting clarification: medicine 1 not read for sure.');
+  expect(rx.forms).toBe(0);  // the Inspector keeps no manual Save / Confirm form
 });
 
 test('the emergency card shows Call 112 and Call 108 as tel: links and folded instructions', async ({ page }) => {
@@ -300,7 +302,8 @@ test('saved addresses and refill schedules say where they come from, and an unkn
   expect(text.sched).toContain('Amlong 5 - for Saroja (your mother)');
   expect(text.sched).toContain("Estimate unavailable - the daily dose isn't recorded");
   expect(text.sched).toContain('daily dose: not recorded');
-  expect(text.sched).toContain('Refill reminders are set up from a confirmed order - none yet.');
+  const controls = await page.evaluate(() => memoryEl.schedList.querySelectorAll('form, input, select, button:not(.memory-forget)').length);
+  expect(controls).toBe(0);  // no "Set up reminder" / "Save" form - kept automatically
 });
 
 test('empty categories are honest empty states', async ({ page }) => {
@@ -310,7 +313,7 @@ test('empty categories are honest empty states', async ({ page }) => {
     return {addr: memoryEl.addrStatus.textContent, sched: memoryEl.schedStatus.textContent};
   });
   expect(text.addr).toContain('No saved addresses');
-  expect(text.sched).toBe('No refill schedules yet.');
+  expect(text.sched).toBe('No refill schedules yet - they are created automatically from your confirmed orders.');
 });
 
 test('a saved address can be picked when the device location is blocked - labelled as saved, not current', async ({ page }) => {
@@ -326,4 +329,18 @@ test('a saved address can be picked when the device location is blocked - labell
   expect(picked.place).toEqual({source: 'saved', label: 'Home'});
   expect(picked.line).toContain('saved address');
   expect(picked.turn).toBe('saved');
+});
+
+test('a refill schedule shows its calculation inputs, sources and reminder state read-only', async ({ page }) => {
+  api.set('a', {schedules: [{...SCHED, source: 'auto_from_order', daily_units: 2, daily_source: 'prescription',
+    prescription_valid_until: '2027-03-28',
+    estimate: {status: 'ok', days_supply: 15, depletion_date: '2026-10-05', next_refill_date: '2026-10-05', next_refill_source: 'estimated', notes: []},
+    reminder: {state: 'scheduled', cycle: '2026-10-05', due_from: '2026-10-02'}}]});
+  const text = await page.evaluate(async () => { await signInAs('a'); await schedRefresh(); return memoryEl.schedList.textContent; });
+  expect(text).toContain('Created automatically from your order');
+  expect(text).toContain('30 units (pack size × quantity)');
+  expect(text).toContain('2 a day (from your prescription)');
+  expect(text).toContain('Supply lasts about 15 days - runs out around 2026-10-05');
+  expect(text).toContain('Reminder scheduled - shown in chat from 2026-10-02.');
+  expect(text).toContain('prescription valid until 2027-03-28');
 });

@@ -1284,7 +1284,7 @@ function shoppingRxDraftCard(card, time) {
       item.unclear ? `Unclear (${Math.round((item.confidence || 0) * 100)}%)` : `${Math.round((item.confidence || 0) * 100)}% sure`));
     box.append(line);
   }
-  box.append(el_('p', 'card-note', 'A pharmacist must verify this. Nothing is ordered from it, and doses are never read off the photo.'));
+  box.append(el_('p', 'card-note', 'A pharmacist must verify this. Nothing is ordered from it; how to take it is kept as written, for refill timing only.'));
   entry.append(box);
   return entry;
 }
@@ -1938,7 +1938,7 @@ const GUARD_LABELS = {
   pharmacy_gate: 'Pharmacy discovery gate', symptom_followup: 'Symptom follow-up', prescription_review: 'Prescription review',
   voice_pause: 'Voice pause (turn joined)',
   tool_gate: 'Medicine & pharmacy tools withheld', reply_gate: 'Unrequested medicine removed from reply',
-  allergy_gate: 'Allergy check before suggesting',
+  allergy_gate: 'Allergy check before suggesting', refill_automation: 'Refill schedules (automatic)', refill_reminder: 'Refill reminder',
 };
 const GUARD_BLOCKS = new Set(['blocked', 'refused', 'declined', 'expired', 'required', 'emergency', 'urgent']);
 const GUARD_ERRORS = new Set(['error', 'unavailable', 'failed']);
