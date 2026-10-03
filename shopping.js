@@ -109,6 +109,11 @@ function cartBillRender(snapshot) {
 
 // A placed order's receipt, centred - the chat keeps a one-line record of it.
 function orderDialogShow(snapshot) {
+  // A SIRU order is a real one: never titled or noted as a demo (audit, 2 Oct).
+  // Only an order this app saved as a demo says so; unknown -> the demo wording.
+  const real = snapshot.source === 'siru';
+  document.getElementById('orderTitle').textContent = real ? `Order ${snapshot.number || ''}`.trim() : 'Demo order placed';
+  document.getElementById('orderDemoNote').hidden = real;
   document.getElementById('orderSummary').replaceChildren(shoppingBillCard(snapshot));
   if (shopEl.cartDialog.open) shopEl.cartDialog.close();
   if (!shopEl.orderDialog.open) shopEl.orderDialog.showModal();
@@ -1047,7 +1052,7 @@ function shoppingOrderListCard(card, time) {
   for (const order of card.orders || []) {
     const snapshot = {
       kind: 'order', number: order.number || '', status: ORDER_STATUS_WORDS[order.status] || order.status || '',
-      store: order.storeName || '', address: '',
+      store: order.storeName || '', address: '', source: order.source || '',
       items: (order.items || []).map(item => ({
         name: item.name, pack: '', qty: item.qty, image_url: item.imageUrl || pharmacyApi.imageFor(item.name),
         price_paise: item.unitPricePaise ?? null,

@@ -20,7 +20,7 @@ const CHENNAI = {lat: 12.9352, lng: 80.2108, precision: 'locality', matched: 'ad
 let api;  // what the page asked the API, and what it answers
 
 test.beforeEach(async ({ page }) => {
-  api = {geocode: [], nearby: [], places: [ARAKKONAM], geocodeStatus: 200};
+  api = {geocode: [], nearby: [], places: [ARAKKONAM], geocodeStatus: 200, catalogLoads: 0};
   const cors = {'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS'};
   await page.route(url => url.pathname.startsWith('/v1/'), async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname;
@@ -31,6 +31,10 @@ test.beforeEach(async ({ page }) => {
         return route.fulfill({status: api.geocodeStatus, headers: cors, json: {detail: "Address lookup isn't available right now."}});
       }
       return route.fulfill({headers: cors, json: {places: api.places}});
+    }
+    if (path === '/v1/pharmacy/products') {
+      api.catalogLoads += 1;
+      return route.fulfill({headers: cors, json: []});
     }
     if (path === '/v1/pharmacy/stores/nearby') {
       const lat = Number(url.searchParams.get('lat')), lng = Number(url.searchParams.get('lng'));
@@ -208,4 +212,19 @@ test('a delivery charge the pharmacy does not record is a dash, never "Free" or 
     expect(said).not.toContain('₹30');
     expect(said).not.toContain('null');
   }
+});
+
+test('a new location reloads the shelf once, not twice', async ({ page }) => {
+  await page.evaluate(() => signInAs('buyer-a'));
+  await page.evaluate(() => initShopping());
+  await typeAddress(page, '#1/15, Gandhi Road, Palanipet, Arakkonam', '631001');
+  await page.locator('#locationGeocodeResult').getByRole('button', {name: 'Use this place'}).click();
+  await expect.poll(() => api.catalogLoads).toBeGreaterThan(0);
+  const before = api.catalogLoads;
+  api.places = [CHENNAI];
+  await typeAddress(page, 'Pallikaranai, Chennai', '600100');
+  await page.locator('#locationGeocodeResult').getByRole('button', {name: 'Use this place'}).click();
+  await expect.poll(() => api.catalogLoads).toBe(before + 1);
+  await page.waitForTimeout(500);
+  expect(api.catalogLoads).toBe(before + 1);  // once per change (it was twice)
 });

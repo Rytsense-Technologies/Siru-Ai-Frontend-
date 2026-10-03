@@ -11,12 +11,22 @@ const item = (id, text) => ({id, user_id: 'u', text, category: 'other', source: 
   created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-01T10:00:00Z'});
 
 let answers;  // GET /v1/memory/me, by user: {status, items}
+let forgotten;  // the forget-everything calls the page made
 
 test.beforeEach(async ({ page }) => {
   answers = new Map();
+  forgotten = [];
   await page.route(url => url.pathname.startsWith('/v1/'), async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (request.method() === 'OPTIONS') return route.fulfill({status: 204, headers: cors});
+    if (path === '/v1/memory/me' && request.method() === 'DELETE') {
+      forgotten.push(path);
+      return route.fulfill({headers: cors, json: {complete: true}});
+    }
+    if (path === '/v1/concierge/conversation/new') {
+      forgotten.push(path);
+      return route.fulfill({headers: cors, json: {ok: true}});
+    }
     if (path === '/v1/memory/me') {
       const user = String(request.headers().authorization || '').replace('Bearer token-', '');
       const answer = answers.get(user) || {status: 503};
@@ -68,4 +78,34 @@ test('a later failure keeps this user\'s loaded list, and never shows another us
   expect(again.status).toContain("Couldn't load memory just now.");
   const b = await page.evaluate(async () => { await signInAs('patient-b'); return memoryShown(); });
   expect(b).toMatchObject({count: '–', items: [], empty: false});
+});
+
+test('"Forget everything" also starts a new conversation - nothing of the forgotten one stays in use', async ({ page }) => {
+  answers.set('a', {status: 200, items: [item(1, 'Prefers evening delivery')]});
+  page.on('dialog', dialog => dialog.accept());
+  const before = await page.evaluate(async () => { await signInAs('a'); return userStartSession('a'); });
+  await page.evaluate(() => memoryEl.memoryForgetAll.click());
+  await expect.poll(() => forgotten.length).toBe(2);
+  expect(forgotten).toEqual(['/v1/memory/me', '/v1/concierge/conversation/new']);
+  const after = await page.evaluate(() => userSession('a'));
+  expect(after).not.toBeNull();
+  expect(after).not.toBe(before);  // a new conversation id, not the forgotten one
+  await expect(page.locator('#memoryStatus')).toContainText('Forgotten');
+});
+
+test('a SIRU order\'s receipt is never titled or noted as a demo; a demo order says so', async ({ page }) => {
+  const shown = await page.evaluate(async () => {
+    await signInAs('a');
+    const read = () => ({title: document.getElementById('orderTitle').textContent,
+      noteHidden: document.getElementById('orderDemoNote').hidden});
+    orderDialogShow({kind: 'order', number: 'SIRU-1042', source: 'siru', items: [], total_paise: 4500});
+    const real = read();
+    shopEl.orderDialog.close();
+    orderDialogShow({kind: 'order', number: 'DEMO-71C0782A', source: 'demo', items: [], total_paise: 2200});
+    const demo = read();
+    shopEl.orderDialog.close();
+    return {real, demo};
+  });
+  expect(shown.real).toEqual({title: 'Order SIRU-1042', noteHidden: true});
+  expect(shown.demo).toEqual({title: 'Demo order placed', noteHidden: false});
 });

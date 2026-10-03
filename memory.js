@@ -397,10 +397,17 @@ memoryEl.memoryForgetAll.onclick = async () => {
     const result = await pharmacyApi.forgetEverything();
     if (owner !== getUserId()) return;
     userForgetDevice();
+    // A new conversation too: the chat on screen and this tab's conversation id
+    // belonged to what was just forgotten (the server dropped its short-term
+    // memory) - the audit found them left in step with nothing (2 Oct).
+    if (typeof shoppingNewChat === 'function') await shoppingNewChat();
+    // The list reloaded first: a successful load clears the status line, which
+    // used to wipe this confirmation right after it was shown.
+    await memoryRefresh();
+    if (owner !== getUserId()) return;
     memoryEl.memoryStatus.textContent = result?.complete === false
       ? "Forgotten - but part of it couldn't be reached just now; what's left expires within a day."
       : 'Forgotten. Siru no longer remembers anything about you.';
-    memoryRefresh();
   } catch (error) {
     memoryEl.memoryStatus.textContent = `Couldn't forget just now: ${pharmacyError(error)}`;
   } finally {

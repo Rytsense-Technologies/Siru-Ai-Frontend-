@@ -75,13 +75,12 @@ function locationRender() {
   locEl.locationStatus.hidden = !message;
   locEl.locationStatus.classList.toggle('location-status-error', Boolean(error) && !loading);
 
-  // A new place re-ranks the shelf from it (the nearest pharmacy per medicine).
+  // A new place re-ranks the shelf from it - shopping.js's location subscriber
+  // reloads it, once (this reloaded it too: two loads per change, audit 2 Oct).
   const key = locationPlaceKey(place);
   if (key !== locationLastPlaceKey) {
-    const changed = locationLastPlaceKey !== null;
     const lost = Boolean(locationLastPlaceKey) && !place;
     locationLastPlaceKey = key;
-    if (changed && pharmacyApi.mode) shoppingLoadCatalog();
     // Still signed in but the location went away (blocked in site settings):
     // ask again. Sign-out clears the user first, so it never lands here.
     if (lost && siruLocation.userId && !locEl.locationDialog.open) locationOpen();
