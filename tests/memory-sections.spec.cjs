@@ -245,7 +245,8 @@ test('a saved prescription is shown read-only: its own date, the patient, the un
   expect(rx.text).toContain('Patient: Saroja');
   expect(rx.text).toContain('Prescription date: 2026-09-28');
   expect(rx.text).toContain('Telma 40 (unclear - not read for sure)');
-  expect(rx.text).toContain('as written: 1-0-1 (2 a day)');
+  expect(rx.text).toContain('daily count read from the written instructions: 2');
+  expect(rx.text).not.toContain('1-0-1');  // the instructions themselves are not shown in the Inspector
   expect(rx.text).toContain('Valid until 2027-03-28');
   expect(rx.text).toContain('Awaiting clarification: medicine 1 not read for sure.');
   expect(rx.forms).toBe(0);  // the Inspector keeps no manual Save / Confirm form
@@ -343,4 +344,15 @@ test('a refill schedule shows its calculation inputs, sources and reminder state
   expect(text).toContain('Supply lasts about 15 days - runs out around 2026-10-05');
   expect(text).toContain('Reminder scheduled - shown in chat from 2026-10-02.');
   expect(text).toContain('prescription valid until 2027-03-28');
+});
+
+test('the integration and memory views have no manual configuration controls', async ({ page }) => {
+  api.set('a', {schedules: [{...SCHED, source: 'user_confirmed_from_order', daily_units: 1, daily_source: undefined}]});
+  const result = await page.evaluate(async () => {
+    await signInAs('a'); await schedRefresh(); await rxRefresh('a');
+    const inMemory = document.getElementById('memoryTab').querySelectorAll('#schedList form, #schedList input, #schedList select, #rxList form, #rxList input');
+    return {controls: inMemory.length, label: memoryEl.schedList.textContent};
+  });
+  expect(result.controls).toBe(0);
+  expect(result.label).toContain('1 a day (you confirmed)');  // a dose the user set before daily_source existed
 });

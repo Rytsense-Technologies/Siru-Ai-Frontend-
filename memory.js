@@ -584,9 +584,11 @@ function rxItem(rx) {
   for (const item of rx.items || []) {
     const line = el_('li', item.unclear ? 'rx-unclear' : '', [item.name, item.strength].filter(Boolean).join(' '));
     if (item.unclear) line.append(' (unclear - not read for sure)');
-    // As written on the prescription - used only for refill timing; never advice.
-    if (item.instructions) line.append(el_('span', 'muted small', ` · as written: ${item.instructions}`
-      + (item.daily_units != null ? ` (${item.daily_units} a day)` : ' (no daily count - not unambiguous)')));
+    // The written instructions stay in the record (refill timing only) - not shown
+    // here; only whether a daily count could be read from them.
+    if (item.instructions) line.append(el_('span', 'muted small', item.daily_units != null
+      ? ` · daily count read from the written instructions: ${item.daily_units}`
+      : ' · instructions recorded - no unambiguous daily count'));
     lines.append(line);
   }
   row.append(lines);
@@ -727,7 +729,9 @@ function schedItem(schedule) {
   const units = {user_confirmed: 'you confirmed', catalog_pack_size: 'pack size × quantity'}[schedule.units_source];
   meta.append(el_('span', '', schedule.units_dispensed != null ? `${schedule.units_dispensed} units (${units})`
     : 'tablets dispensed: not known'));
-  const daily = {user_confirmed: 'you confirmed', prescription: 'from your prescription'}[schedule.daily_source] || 'recorded';
+  // A schedule set up by the user before daily_source existed: its dose was the user's.
+  const daily = {user_confirmed: 'you confirmed', prescription: 'from your prescription'}[schedule.daily_source]
+    || (schedule.source === 'user_confirmed_from_order' ? 'you confirmed' : 'recorded');
   meta.append(el_('span', '', schedule.daily_units != null ? `${schedule.daily_units} a day (${daily})` : 'daily dose: not recorded'));
   if (schedule.prescription_valid_until) meta.append(el_('span', '', `prescription valid until ${schedule.prescription_valid_until}`));
   row.append(meta);
