@@ -1197,6 +1197,14 @@ function shoppingToolCard(card, time) {
         if (button) row.append(button);
         box.append(row);
       }
+    } else if (block.type === 'details') {
+      // What to do while help comes (the emergency card): folded, opened on a tap.
+      const more = el_('details', 'card-details');
+      more.append(el_('summary', '', block.summary || 'More'));
+      const list = el_('ol', 'card-steps');
+      for (const item of block.items || []) list.append(el_('li', '', String(item)));
+      more.append(list);
+      box.append(more);
     } else if (block.type === 'actions') {
       const buttons = (block.buttons || []).map(uiCardButton).filter(Boolean);
       if (buttons.length) {
@@ -1926,8 +1934,11 @@ const GUARD_LABELS = {
   care_self_care: 'Self-care only (no product offered)', overlap_consent: 'Overlapping speech',
   cart_guard: 'Cart guard', pharmacy_selection: 'Pharmacy selection required', allergy_check: 'Allergy check',
   memory_consent: 'Memory consent', memory_safety: 'Memory safety', tool_refused: 'Tool call refused',
+  safety_triage: 'Safety triage', emergency_actions: 'Emergency actions shown', commerce_gate: 'Pharmacy / cart / order gate',
+  pharmacy_gate: 'Pharmacy discovery gate', symptom_followup: 'Symptom follow-up', prescription_review: 'Prescription review',
+  voice_pause: 'Voice pause (turn joined)',
 };
-const GUARD_BLOCKS = new Set(['blocked', 'refused', 'declined', 'expired', 'required']);
+const GUARD_BLOCKS = new Set(['blocked', 'refused', 'declined', 'expired', 'required', 'emergency', 'urgent']);
 const GUARD_ERRORS = new Set(['error', 'unavailable', 'failed']);
 
 function guardTone(verdict) {

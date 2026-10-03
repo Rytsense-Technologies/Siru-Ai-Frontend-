@@ -9,6 +9,7 @@ const memoryEl = Object.fromEntries([
   "memoryList", "memoryEmpty", "memoryCount", "memoryCountTop", "memoryStatus",
   "memoryConsent", "memoryConsentNote", "stmBadge", "stmSummary", "stmRecent", "memoryCart", "memoryOrders", "memoryRefills",
   "memoryForgetAll", "householdCount", "householdStatus", "householdEmpty", "householdList",
+  "rxCount", "rxStatus", "rxList",
 ].map(id => [id, document.getElementById(id)]));
 
 const MEMORY_LABELS = {
@@ -306,6 +307,7 @@ function memoryRefresh({delayed = false} = {}) {
     memoryEl.stmRecent.replaceChildren();
     memoryEl.stmSummary.textContent = 'No conversation yet.';
     if (typeof householdReset === 'function') householdReset();
+    if (typeof rxReset === 'function') rxReset();
     return;
   }
   if (delayed) { memoryDelayTimer = setTimeout(() => memoryRefresh(), MEMORY_DELAY_MS); return; }
@@ -317,6 +319,7 @@ function memoryRefresh({delayed = false} = {}) {
   memoryOrdersRefresh(userId);
   memoryRefillsRefresh(userId);
   householdRefresh(userId);
+  rxRefresh(userId);
   memoryLoading = pharmacyApi.memory()
     .then(data => {
       if (getUserId() !== userId) return;
@@ -524,4 +527,128 @@ async function householdDelete(member, row, button) {
   }
 }
 
+// ---------- prescriptions (GET/PATCH/DELETE /v1/prescriptions/me) ----------
+//
+// Read from the user's photos (prescriptions/extract.py): the date written on
+// the prescription (never the upload's), the patient, the medicines - each
+// unclear one marked, never guessed - and whether the user has confirmed it.
+// Confirming needs every uncertain field checked; it is the user's check,
+// not a pharmacist's. Only the signed-in user's own.
+let rxShownFor = null;
 
+function rxReset() {
+  rxShownFor = null;
+  if (!memoryEl.rxList) return;
+  memoryEl.rxList.replaceChildren();
+  memoryEl.rxCount.textContent = '0';
+  memoryEl.rxStatus.textContent = '';
+}
+
+const RX_FIELD_WORDS = {patient_name: 'patient name', prescription_date: 'prescription date'};
+
+function rxItem(rx) {
+  const row = el_('article', 'memory-item rx-item');
+  const head = el_('div', 'memory-head');
+  head.append(el_('p', 'memory-text', `Patient: ${rx.patient_name || 'Not readable - please add'}`));
+  const remove = el_('button', 'icon-btn memory-forget');
+  remove.append(icon('trash'));
+  remove.type = 'button';
+  remove.title = 'Delete this prescription';
+  remove.setAttribute('aria-label', 'Delete this prescription');
+  remove.onclick = () => rxDelete(rx, row, remove);
+  head.append(remove);
+  row.append(head);
+  const meta = el_('div', 'memory-meta');
+  meta.append(el_('span', 'memory-tag long', 'Long-term'));
+  meta.append(el_('span', '', `Prescription date: ${rx.prescription_date || 'not readable'}`));
+  if (rx.uploaded_at) meta.append(el_('span', '', `Uploaded ${orderWhen(rx.uploaded_at)}`));
+  meta.append(el_('span', 'household-status', rx.verification === 'confirmed_by_user'
+    ? 'Confirmed by you' : 'OCR extracted - awaiting your confirmation'));
+  row.append(meta);
+  const lines = el_('ul', 'rx-lines');
+  for (const item of rx.items || []) {
+    const line = el_('li', item.unclear ? 'rx-unclear' : '', [item.name, item.strength].filter(Boolean).join(' '));
+    if (item.unclear) line.append(' (unclear - please check)');
+    lines.append(line);
+  }
+  row.append(lines);
+  if (rx.verification !== 'confirmed_by_user') row.append(rxForm(rx));
+  return row;
+}
+
+// Correct what was read, then confirm - refused by the server while anything is still uncertain.
+function rxForm(rx) {
+  const form = el_('form', 'rx-form');
+  const field = (label, value, name) => {
+    const wrap = el_('label', '', label);
+    const input = el_('input');
+    input.name = name;
+    input.value = value || '';
+    input.maxLength = name === 'prescription_date' ? 20 : 160;
+    wrap.append(input);
+    form.append(wrap);
+    return input;
+  };
+  const patient = field('Patient name', rx.patient_name, 'patient_name');
+  const date = field('Prescription date (as written)', rx.prescription_date, 'prescription_date');
+  const names = (rx.items || []).map((item, n) =>
+    field(`Medicine ${n + 1}${item.unclear ? ' (unclear)' : ''}`, [item.name, item.strength].filter(Boolean).join(' '), `item${n}`));
+  const bar = el_('div', 'rx-actions');
+  const confirm = el_('button', 'secondary-btn', 'Confirm these details');
+  confirm.type = 'submit';
+  bar.append(confirm);
+  form.append(bar);
+  form.onsubmit = async event => {
+    event.preventDefault();
+    const userId = getUserId();
+    const body = {confirm: true};
+    if (patient.value.trim()) body.patient_name = patient.value.trim();
+    if (date.value.trim()) body.prescription_date = date.value.trim();
+    if (names.length) body.items = names.map(input => ({name: input.value.trim()})).filter(item => item.name);
+    confirm.disabled = true;
+    try {
+      await apiFetch(`/v1/prescriptions/me/${encodeURIComponent(rx.id)}`, {method: 'PATCH', body: JSON.stringify(body)});
+      if (getUserId() === userId) await rxRefresh(userId);
+    } catch (error) {
+      const detail = error?.detail || error?.body?.detail || {};
+      const missing = Array.isArray(detail.uncertain_fields) ? detail.uncertain_fields : [];
+      memoryEl.rxStatus.textContent = missing.length
+        ? `Please check: ${missing.map(f => RX_FIELD_WORDS[f] || f.replace('items.', 'medicine ')).join(', ')}.`
+        : `Couldn't save that just now. ${pharmacyError(error)}`;
+      confirm.disabled = false;
+    }
+  };
+  return form;
+}
+
+async function rxRefresh(userId = getUserId()) {
+  if (!memoryEl.rxList) return;
+  if (!userId) { rxReset(); return; }
+  if (rxShownFor !== userId) { rxReset(); memoryEl.rxStatus.textContent = 'Loading…'; }
+  try {
+    const data = await apiFetch('/v1/prescriptions/me');
+    if (getUserId() !== userId) return;
+    rxShownFor = userId;
+    const list = Array.isArray(data.prescriptions) ? data.prescriptions : [];
+    memoryEl.rxList.replaceChildren(...list.map(rxItem));
+    memoryEl.rxCount.textContent = list.length;
+    memoryEl.rxStatus.textContent = list.length ? '' : 'No prescriptions saved yet - attach a photo in the chat.';
+  } catch (error) {
+    if (getUserId() !== userId) return;
+    if (rxShownFor !== userId) { memoryEl.rxList.replaceChildren(); memoryEl.rxCount.textContent = '–'; }
+    memoryEl.rxStatus.textContent = `Couldn't load prescriptions just now. ${pharmacyError(error)}`;
+  }
+}
+
+async function rxDelete(rx, row, button) {
+  if (!window.confirm("Delete this prescription? This can't be undone.")) return;
+  button.disabled = true;
+  try {
+    await apiFetch(`/v1/prescriptions/me/${encodeURIComponent(rx.id)}`, {method: 'DELETE'});
+    row.remove();
+    memoryEl.rxCount.textContent = memoryEl.rxList.children.length;
+  } catch (error) {
+    button.disabled = false;
+    memoryEl.rxStatus.textContent = `Couldn't delete that just now. ${pharmacyError(error)}`;
+  }
+}

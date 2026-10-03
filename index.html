@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Siru Pharmacy — AI Assistant</title>
 <link rel="icon" type="image/svg+xml" href="images/favicon.svg">
-<link rel="stylesheet" href="style.css?v=60">
-<link rel="stylesheet" href="dashboard.css?v=60">
+<link rel="stylesheet" href="style.css?v=61">
+<link rel="stylesheet" href="dashboard.css?v=61">
 <!-- livekit-client 2.22.3, self-hosted (vendor/, Apache-2.0) - pinned, and checked against its hash. -->
 <script src="vendor/livekit-client-2.22.3/livekit-client.umd.js" integrity="sha384-G/xxtkVytOx/ia9Q8MXxM+V0ohsaY1fZAgVP3iSGTPz4wJ0s3+ulJNKXh/gnzEDZ"></script>
 </head>
@@ -224,6 +224,15 @@
         <div id="householdList" class="memory-list"></div>
       </div>
 
+      <!-- Prescriptions read from photos (GET/PATCH/DELETE /v1/prescriptions/me - memory.js):
+           the date written on it, whose it is, what couldn't be read, and the user's confirmation. -->
+      <div class="memory-section">
+        <div class="memory-section-head"><h3><span class="memory-kind">Long-Term Memory</span> Prescriptions <b id="rxCount" class="memory-count">0</b></h3><span class="memory-badge memory-badge-db">App database</span></div>
+        <p class="muted small">Read from your photos. Check them - anything marked unclear was not read for sure. Your confirmation is not a pharmacist's check, and no doses are read.</p>
+        <p id="rxStatus" class="muted small" role="status"></p>
+        <div id="rxList" class="memory-list"></div>
+      </div>
+
       <!-- 3-4. Shopping state, not memory: the cart as it is now and the order
            history, each from its own source (memory.js) - shown here as cards. -->
       <p class="memory-scope">Shopping records - from your cart and orders, not memory.</p>
@@ -387,18 +396,18 @@
   <form method="dialog"><button>Continue shopping</button></form>
 </dialog>
 
-<script src="config.js?v=60"></script>
-<script src="safe-dom.js?v=60"></script>
-<script src="icons.js?v=60"></script>
-<script src="users.js?v=60"></script>
-<script src="location.js?v=60"></script>
-<script src="app.js?v=60"></script>
-<script src="pharmacy-api.js?v=60"></script>
-<script src="shopping.js?v=60"></script>
-<script src="shop-flow.js?v=60"></script>
-<script src="memory.js?v=60"></script>
-<script src="location-ui.js?v=60"></script>
-<script src="merchant.js?v=60"></script>
-<script src="user-menu.js?v=60"></script>
+<script src="config.js?v=61"></script>
+<script src="safe-dom.js?v=61"></script>
+<script src="icons.js?v=61"></script>
+<script src="users.js?v=61"></script>
+<script src="location.js?v=61"></script>
+<script src="app.js?v=61"></script>
+<script src="pharmacy-api.js?v=61"></script>
+<script src="shopping.js?v=61"></script>
+<script src="shop-flow.js?v=61"></script>
+<script src="memory.js?v=61"></script>
+<script src="location-ui.js?v=61"></script>
+<script src="merchant.js?v=61"></script>
+<script src="user-menu.js?v=61"></script>
 </body>
 </html>

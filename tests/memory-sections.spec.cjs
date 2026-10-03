@@ -39,6 +39,13 @@ test.beforeEach(async ({ page }) => {
     if (path.startsWith('/v1/pharmacy/orders/')) return answer(mine.siruOrders);
     if (path === '/v1/actions/demo') return answer(mine.demo);
     if (path === '/v1/concierge/refills') return answer(mine.refills === undefined ? {items: []} : mine.refills);
+    if (path === '/v1/prescriptions/me') return answer(mine.rx === undefined ? {prescriptions: []} : mine.rx);
+    if (path.startsWith('/v1/prescriptions/me/') && request.method() === 'PATCH') {
+      mine.patched = JSON.parse(request.postData() || '{}');
+      if (mine.refuse) return route.fulfill({status: 409, headers: cors, json: {detail: {
+        message: 'Some details could not be read for sure.', uncertain_fields: ['items.1']}}});
+      return route.fulfill({headers: cors, json: {prescription: {}}});
+    }
     if (path === '/v1/memory/me') return route.fulfill({headers: cors, json: {items: [], memory_enabled: true}});
     return route.abort();
   });
@@ -215,4 +222,40 @@ test('persistent records are labelled Long-Term Memory, the conversation Short-T
   expect(tab.card).toContain('Long-term · Household health');
   expect(tab.form).toBe(false);
   expect(tab.addPerson).toBe(false);
+});
+
+const RX = {id: 'rx1', patient_name: 'Saroja', prescription_date: '2026-09-28', uploaded_at: '2026-10-02T09:00:00Z',
+  items: [{name: 'Amlong 5', strength: '5 mg', unclear: false}, {name: 'Telma 40', strength: null, unclear: true}],
+  ocr_status: 'extracted', verification: 'awaiting_user_confirmation', uncertain_fields: ['items.1']};
+
+test('a saved prescription shows its own date, the patient, the unclear line, and awaits confirmation', async ({ page }) => {
+  api.set('a', {rx: {prescriptions: [RX]}, refuse: true});
+  const text = await page.evaluate(async () => { await signInAs('a'); await rxRefresh('a'); return memoryEl.rxList.textContent; });
+  expect(text).toContain('Patient: Saroja');
+  expect(text).toContain('Prescription date: 2026-09-28');
+  expect(text).toContain('Uploaded');
+  expect(text).toContain('Telma 40 (unclear - please check)');
+  expect(text).toContain('OCR extracted - awaiting your confirmation');
+  // Confirming while a line is still uncertain: the server refuses, and the user is told what to check.
+  await page.evaluate(() => memoryEl.rxList.querySelector('form').requestSubmit());
+  await expect.poll(() => page.evaluate(() => memoryEl.rxStatus.textContent)).toBe('Please check: medicine 1.');
+  expect(api.get('a').patched).toMatchObject({confirm: true, patient_name: 'Saroja', prescription_date: '2026-09-28'});
+});
+
+test('the emergency card shows Call 112 and Call 108 as tel: links and folded instructions', async ({ page }) => {
+  const card = await page.evaluate(() => {
+    const entry = shoppingToolCard({kind: 'ui', title: 'Emergency', accent: 'danger', blocks: [
+      {type: 'note', tone: 'danger', text: 'Get emergency medical help immediately.'},
+      {type: 'actions', buttons: [
+        {label: 'Call 112 — Emergency assistance', intent: 'call_emergency', style: 'danger', payload: {tel: '112'}},
+        {label: 'Call 108 — Ambulance (where available)', intent: 'call_emergency', style: 'danger', payload: {tel: '108'}}]},
+      {type: 'details', summary: 'Get emergency help instructions', items: ['Call 112 or 108 now.', 'Stay with the person.']}]}, '');
+    return {links: [...entry.querySelectorAll('a')].map(a => [a.textContent, a.getAttribute('href')]),
+      summary: entry.querySelector('details summary')?.textContent, steps: entry.querySelectorAll('details li').length,
+      danger: !!entry.querySelector('.accent-danger')};
+  });
+  expect(card.links).toEqual([['Call 112 — Emergency assistance', 'tel:112'], ['Call 108 — Ambulance (where available)', 'tel:108']]);
+  expect(card.summary).toBe('Get emergency help instructions');
+  expect(card.steps).toBe(2);
+  expect(card.danger).toBe(true);
 });

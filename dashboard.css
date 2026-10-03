@@ -762,6 +762,17 @@ html.shop-open, html.shop-open body { overflow: hidden; }
 .memory-tag.long { background: #eef4ff; color: #1d3f8a; }
 .memory-tag.health { background: #fff1d6; color: #9a5b00; }
 .usual-pharmacy-card { border-color: var(--accent); background: #f5f8ff; }
+.ui-card.accent-danger { border: 2px solid #c62828; background: #fff5f5; }
+.ui-card.accent-warning { border: 1px solid #f3d6a4; background: #fffaf0; }
+.card-details { margin-top: 8px; font-size: 13px; }
+.card-details > summary { cursor: pointer; font-weight: 600; color: #8a1c1c; }
+.card-steps { margin: 6px 0 0 18px; padding: 0; display: grid; gap: 4px; }
+.rx-item .rx-lines { margin: 6px 0; padding-left: 18px; }
+.rx-item .rx-unclear { color: #9a5b00; font-weight: 600; }
+.rx-form { display: grid; gap: 6px; margin-top: 6px; font-size: 12px; }
+.rx-form label { display: grid; gap: 2px; }
+.rx-form input { min-width: 0; padding: 6px 8px; border: 1px solid var(--line-soft); border-radius: 8px; font: inherit; }
+.rx-form .rx-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .usual-pharmacy-card > p { font-weight: 600; }
 
 /* ---------- long values wrap inside their own component ----------
