@@ -1937,6 +1937,7 @@ const GUARD_LABELS = {
   safety_triage: 'Safety triage', emergency_actions: 'Emergency actions shown', commerce_gate: 'Pharmacy / cart / order gate',
   pharmacy_gate: 'Pharmacy discovery gate', symptom_followup: 'Symptom follow-up', prescription_review: 'Prescription review',
   voice_pause: 'Voice pause (turn joined)',
+  tool_gate: 'Medicine & pharmacy tools withheld', reply_gate: 'Unrequested medicine removed from reply',
 };
 const GUARD_BLOCKS = new Set(['blocked', 'refused', 'declined', 'expired', 'required', 'emergency', 'urgent']);
 const GUARD_ERRORS = new Set(['error', 'unavailable', 'failed']);
