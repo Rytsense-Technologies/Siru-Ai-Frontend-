@@ -254,12 +254,16 @@ function shopFlowSwitchPrompt() {
 let shopFlowBusy = false;
 async function shopFlowCartChange(run) {
   if (shopFlowBusy) return;
+  const generation = shop.generation;  // whose cart change this is
   shopFlowBusy = true;
   shopFlowEl.body.classList.add('busy');
   try {
     await run();
     await shoppingRefresh();
   } catch (error) {
+    // Signed out or switched meanwhile: the previous user's error - it can name
+    // their product or pharmacy - and their "switch pharmacy?" are not the next user's.
+    if (generation !== shop.generation) return;
     if (error.status === 409 && error.detail?.conflict === 'cart_store') throw error;
     shoppingNotice(`Couldn't update your cart. ${pharmacyError(error)}`);
   } finally {

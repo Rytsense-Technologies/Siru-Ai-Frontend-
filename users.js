@@ -24,7 +24,13 @@ function userForget(key, storage = localStorage) {
 // sees it. App settings (the API address) belong to no user and stay.
 const USER_DATA_PREFIXES = ['siru_chat_', 'siru_sessions_', 'siru_activity_', 'siru_location_', 'siru_current_session_'];
 function userDataKey(key) { return USER_DATA_PREFIXES.some(prefix => key.startsWith(prefix)); }
+// How many times this device has been wiped. A reply or booking that started
+// before a wipe (its user signed out, or someone new signed in) must not write
+// that user's conversation back (shopping.js shoppingSubmit, shoppingPrepareBooking).
+let deviceWipes = 0;
+function deviceWipeCount() { return deviceWipes; }
 function userForgetDevice() {
+  deviceWipes++;
   for (const storage of [localStorage, sessionStorage]) {
     try {
       for (const key of Object.keys(storage)) if (userDataKey(key)) storage.removeItem(key);

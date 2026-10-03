@@ -1217,6 +1217,7 @@ async function shoppingPrepareBooking(doctor, slot, dateLabel) {
   if (shop.busy || !getUserId()) return;
   const owner = getUserId();
   const generation = shop.generation;
+  const wipes = deviceWipeCount();
   const turnId = crypto.randomUUID();
   shop.busy = true;
   shoppingControls();
@@ -1226,9 +1227,13 @@ async function shoppingPrepareBooking(doctor, slot, dateLabel) {
     const data = await apiFetch('/v1/actions/bookings', {method: 'POST', body: JSON.stringify({
       doctor_code: doctor.code, start_time: slot.startTime, mode: slot.mode || null})});
     if (generation !== shop.generation) {
-      // The user changed meanwhile: the prepared booking goes to its owner's history only.
-      Object.assign(turn.record, {status: 'answered', reply, cards: [data.card]});
-      userSaveMessage(owner, turn.record);
+      // The user changed meanwhile: the prepared booking goes to its owner's
+      // history only - and not even there once the device was wiped (they
+      // signed out, or someone new signed in): nothing of theirs stays here.
+      if (wipes === deviceWipeCount()) {
+        Object.assign(turn.record, {status: 'answered', reply, cards: [data.card]});
+        userSaveMessage(owner, turn.record);
+      }
       return;
     }
     shoppingTurnFinish(turnId, {reply, cards: [data.card]});
@@ -2167,6 +2172,7 @@ async function shoppingSubmit(text) {
   if (shop.busy || !getUserId()) return;
   const owner = getUserId();
   const generation = shop.generation;
+  const wipes = deviceWipeCount();
   const turnId = crypto.randomUUID();
   shoppingEnsureSession();
   shop.busy = true;
@@ -2185,9 +2191,13 @@ async function shoppingSubmit(text) {
     });
     activityLiveEnd(live);
     if (generation !== shop.generation) {
-      // The user changed meanwhile: keep the reply in the owner's history only.
-      Object.assign(turn.record, {status: 'answered', reply: result.message, agent: result.trace?.agent || ''});
-      userSaveMessage(owner, turn.record);
+      // The user changed meanwhile: keep the reply in the owner's history only -
+      // and not even there once the device was wiped (they signed out, or
+      // someone new signed in): nothing of theirs stays on this device.
+      if (wipes === deviceWipeCount()) {
+        Object.assign(turn.record, {status: 'answered', reply: result.message, agent: result.trace?.agent || ''});
+        userSaveMessage(owner, turn.record);
+      }
       return;
     }
     await shoppingTurnFinish(turnId, {status: 'answered', reply: result.message, agent: result.trace?.agent,
