@@ -10,15 +10,22 @@ const cors = {'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers'
 const item = (id, text) => ({id, user_id: 'u', text, category: 'other', source: 'chat', consent: 'granted',
   created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-01T10:00:00Z'});
 
-let answers;  // GET /v1/memory/me, by user: {status, items}
+let answers;  // GET /v1/memory/me, by user: {status, items, enabled}
 let forgotten;  // the forget-everything calls the page made
+let consent;  // the PUT /v1/memory/me/consent values the page sent
 
 test.beforeEach(async ({ page }) => {
   answers = new Map();
   forgotten = [];
+  consent = [];
   await page.route(url => url.pathname.startsWith('/v1/'), async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (request.method() === 'OPTIONS') return route.fulfill({status: 204, headers: cors});
+    if (path === '/v1/memory/me/consent' && request.method() === 'PUT') {
+      const enabled = JSON.parse(request.postData()).enabled;
+      consent.push(enabled);
+      return route.fulfill({headers: cors, json: {user_id: 'u', memory_enabled: enabled}});
+    }
     if (path === '/v1/memory/me' && request.method() === 'DELETE') {
       forgotten.push(path);
       return route.fulfill({headers: cors, json: {complete: true}});
@@ -31,8 +38,8 @@ test.beforeEach(async ({ page }) => {
       const user = String(request.headers().authorization || '').replace('Bearer token-', '');
       const answer = answers.get(user) || {status: 503};
       if (answer.status !== 200) return route.fulfill({status: answer.status, headers: cors, json: {detail: 'unavailable'}});
-      return route.fulfill({headers: cors, json: {user_id: user, memory_enabled: true, consent_switch_available: true,
-        items: answer.items}});
+      return route.fulfill({headers: cors, json: {user_id: user, memory_enabled: answer.enabled ?? true,
+        consent_switch_available: true, items: answer.items}});
     }
     return route.abort();
   });
@@ -108,4 +115,30 @@ test('a SIRU order\'s receipt is never titled or noted as a demo; a demo order s
   });
   expect(shown.real).toEqual({title: 'Order SIRU-1042', noteHidden: true});
   expect(shown.demo).toEqual({title: 'Demo order placed', noteHidden: false});
+});
+
+test('the memory switch\'s note says what OFF really does: nothing saved, used or read out - allergies still checked', async ({ page }) => {
+  // The API (sec-102) stops using and reading out stored facts while memory is off; the allergy check
+  // on orders still uses the saved allergies. The note said only "keeps what is already here".
+  answers.set('patient-a', {status: 200, items: [item(1, 'Allergic to sulfa')]});
+  const on = await page.evaluate(async () => { await signInAs('patient-a'); await memoryShown();
+    return memoryEl.memoryConsentNote.textContent; });
+  expect(on).toContain('saved and used');
+  expect(on).toContain('stops Siru saving, using or reading out');
+  expect(on).toContain('still checked against your saved allergies');
+
+  const off = await page.evaluate(async () => { memoryEl.memoryConsent.click();
+    for (let i = 0; i < 50 && memoryEl.memoryConsent.disabled; i++) await new Promise(r => setTimeout(r, 20));
+    return {note: memoryEl.memoryConsentNote.textContent, checked: memoryEl.memoryConsent.checked}; });
+  expect(consent).toEqual([false]);
+  expect(off.checked).toBe(false);
+  expect(off.note).toContain('not used or read out');
+  expect(off.note).toContain('still checked against your saved allergies');
+
+  // A user whose memory is already off sees the paused note on load.
+  answers.set('patient-b', {status: 200, items: [], enabled: false});
+  const loaded = await page.evaluate(async () => { await signInAs('patient-b'); await memoryShown();
+    return {note: memoryEl.memoryConsentNote.textContent, checked: memoryEl.memoryConsent.checked}; });
+  expect(loaded.checked).toBe(false);
+  expect(loaded.note).toContain('not used or read out');
 });

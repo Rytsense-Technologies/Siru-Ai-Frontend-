@@ -360,13 +360,15 @@ function memoryRefresh({delayed = false} = {}) {
   return memoryLoading;
 }
 
-// The consent switch: off means nothing new is remembered from here on.
-// What is already remembered stays until the user deletes it.
+// The consent switch: off means nothing new is remembered from here on, and
+// what is already remembered is neither used in a turn nor read out (the API's
+// sec-102). It stays until the user deletes it. The allergy check on orders is
+// a safety check and still uses the saved allergies - the note says so.
 function memoryConsentShow(enabled) {
   memoryEl.memoryConsent.checked = enabled;
   memoryEl.memoryConsentNote.textContent = enabled
-    ? 'New facts are saved. Turning this off keeps what is already here.'
-    : 'Paused: nothing new is remembered. What is already here is kept.';
+    ? 'New facts are saved and used. Turning this off stops Siru saving, using or reading out what is here; it stays until you delete it. Medicines are still checked against your saved allergies.'
+    : 'Paused: nothing new is remembered, and what is here is not used or read out - it stays until you delete it. Medicines are still checked against your saved allergies.';
 }
 
 memoryEl.memoryConsent.onchange = async event => {
