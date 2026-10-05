@@ -783,7 +783,7 @@ function shoppingBillCard(snapshot) {
 function productRow(product, badge) {
   const row = el_('div', 'card-product');
   const image = el_('img');
-  image.src = safeImageUrl(product.image_url || pharmacyApi.imageFor(product.name));
+  image.src = safeImageUrl(product.image_url || product.imageUrl || pharmacyApi.imageFor(product.name));
   image.alt = '';
   image.width = 44;
   image.height = 44;
@@ -803,8 +803,12 @@ function shoppingOfferCard(card, time) {
   const {entry} = chatEntry({label: 'Pharmacy', time, className: 'card-entry'});
   const box = el_('div', 'chat-card offer-card');
   box.dataset.product = card.product.name;
-  // Shown once the user chose this pharmacy (from the list, or by naming it).
-  box.append(el_('div', 'card-eyebrow', 'Your pharmacy'));
+  // The answer it came with: "Here are the thermometers I found." draws a card each.
+  box.dataset.answer = String(time ?? '');
+  // The user's pharmacy (chosen from the list, or named) - or, for "Here is X I
+  // found.", the nearest with it in stock or their usual one (pickedBy): named as such.
+  const eyebrow = {nearest: 'Nearest pharmacy with it in stock', usual: 'Your usual pharmacy'}[card.pickedBy] || 'Your pharmacy';
+  box.append(el_('div', 'card-eyebrow', eyebrow));
   const store = el_('div', 'card-store');
   store.append(Object.assign(el_('span', 'card-store-icon'), {ariaHidden: 'true'}));
   store.lastChild.append(icon('store'));
@@ -824,16 +828,20 @@ function shoppingOfferCard(card, time) {
   // "Add it": the offer this card shows - that listing (its product and
   // pharmacy ids), the same as saying "yes". Before, it sent "Add <name> to my
   // cart", which picked the pharmacy again (the cart's, else the nearest) - not
-  // necessarily this one. Only the latest offer card can: an older one's offer
-  // is gone (the server lets it go on any other turn), so it says so instead.
+  // necessarily this one. Only the latest answer's cards can: an older one's
+  // offer is gone (the server lets it go on any other turn), so it says so
+  // instead. Several cards in that answer: this card's product by name - the
+  // server takes it from the products it just showed (their ids and pharmacies),
+  // never from a new search.
   add.onclick = () => {
     const offers = [...shopEl.chatMessages.querySelectorAll('.offer-card')];
-    if (offers.at(-1) !== box) {
+    const latest = offers.filter(other => other.dataset.answer === offers.at(-1)?.dataset.answer);
+    if (!latest.includes(box)) {
       add.disabled = true;
       box.append(el_('p', 'card-note', 'This offer has been replaced - ask for it again to add it.'));
       return;
     }
-    shoppingSubmit('Add it to my cart');
+    shoppingSubmit(latest.length > 1 ? `Add ${card.product.name} to my cart` : 'Add it to my cart');
   };
   box.append(add);
   if (card.alternatives?.length) {

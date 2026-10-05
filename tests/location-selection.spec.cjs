@@ -171,7 +171,9 @@ test('only the latest pharmacy card adds - an older one\'s offer is gone', async
     window.shoppingSubmit = async text => { sentCommands.push(text); };
     const card = name => ({kind: 'pharmacy_offer', pharmacy: {name, distanceKm: 0.3},
       product: {id: `dolo-${name}`, name: 'Dolo 650', pricePaise: 3360, inStock: true}, alternatives: []});
-    for (const name of ['Arun Medicals', 'Jeeva Medicals']) shopEl.chatMessages.append(shoppingOfferCard(card(name), Date.now()));
+    // Two answers, one card each (a card's answer is the time its turn was answered).
+    ['Arun Medicals', 'Jeeva Medicals'].forEach((name, n) =>
+      shopEl.chatMessages.append(shoppingOfferCard(card(name), `2026-10-05T10:00:0${n}.000Z`)));
     const [older, latest] = shopEl.chatMessages.querySelectorAll('.offer-card .card-action');
     older.click();
     latest.click();
@@ -180,6 +182,31 @@ test('only the latest pharmacy card adds - an older one\'s offer is gone', async
   expect(sent.commands).toEqual(['Add it to my cart']);  // the latest offer, as "yes" - not "Add Dolo 650" re-picked
   expect(sent.olderDisabled).toBe(true);
   expect(sent.eyebrow).toBe('Your pharmacy');
+});
+
+test('two product cards in one answer each add their own product, by name', async ({ page }) => {
+  // "Here are the thermometer options I found." - a card each. Before, only the last card's
+  // button worked ("This offer has been replaced") and it added whichever offer was held.
+  await page.evaluate(() => signInAs('buyer-a'));
+  const sent = await page.evaluate(() => {
+    window.sentCommands = [];
+    window.shoppingSubmit = async text => { sentCommands.push(text); };
+    const card = name => ({kind: 'pharmacy_offer', pickedBy: 'nearest', pharmacy: {name: 'Selvam Pharmacy', distanceKm: 2.4},
+      product: {id: `id-${name}`, name, pricePaise: 19900, inStock: true, imageUrl: null}, alternatives: []});
+    const answeredAt = '2026-10-05T10:00:00.000Z';
+    for (const name of ['Dr Trust Thermometer', 'Omron Digital Thermometer']) {
+      shopEl.chatMessages.append(shoppingOfferCard(card(name), answeredAt));
+    }
+    const [first, second] = shopEl.chatMessages.querySelectorAll('.offer-card .card-action');
+    first.click();
+    second.click();
+    return {commands: sentCommands, firstDisabled: first.disabled,
+            eyebrows: [...shopEl.chatMessages.querySelectorAll('.offer-card .card-eyebrow')].map(e => e.textContent)};
+  });
+  expect(sent.commands).toEqual(['Add Dr Trust Thermometer to my cart', 'Add Omron Digital Thermometer to my cart']);
+  expect(sent.firstDisabled).toBe(false);
+  // Picked as the nearest with it in stock - never called the user's own pharmacy.
+  expect(sent.eyebrows).toEqual(['Nearest pharmacy with it in stock', 'Nearest pharmacy with it in stock']);
 });
 
 // Missing values are "—" in their place - never invented, never "null"/"undefined"/"0 km"
