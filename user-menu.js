@@ -116,7 +116,7 @@ loginEl.loginForm.addEventListener('submit', async event => {
       return;
     }
     loginEl.loginPassword.value = '';
-    userForgetDevice();  // a new sign-in: nothing a previous person left on this device
+    userForgetOthers(data?.user?.id);  // a new sign-in: nothing another person left on this device (Bug #12B)
     authSave(data);
     // A fresh chat for every sign-in. The session itself is created when the
     // user first types or speaks (users.js userEnsureSession), so signing in
@@ -193,7 +193,7 @@ loginEl.demoMerchantBtn?.addEventListener('click', async () => {
       loginEl.demoMerchantError.hidden = false;
       return;
     }
-    userForgetDevice();  // a new sign-in: nothing a previous person left on this device
+    userForgetOthers(data?.user?.id);  // a new sign-in: nothing another person left on this device (Bug #12B)
     authSave(data);
     await applySignedInUser();
   } catch {

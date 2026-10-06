@@ -37,6 +37,7 @@ const shopFlow = {
   storesCache: new Map(),   // "lat,lng" -> stores
   shelfCache: new Map(),    // storeId -> products
   confirmSwitch: null,      // {product, qty} awaiting "Switch pharmacy"
+  notice: null,             // shown once at the top of the next checkout (a price changed)
   seq: 0,
 };
 
@@ -353,6 +354,11 @@ async function shopFlowCheckout() {
   }
   const pharmacy = shopFlow.pharmacy && shopFlow.pharmacy.id === bill.storeId ? shopFlow.pharmacy : null;
   const wrap = el_('div', 'shop-checkout');
+  if (shopFlow.notice) {
+    // Shown once: why the checkout is shown again (a price changed, Bug #10).
+    wrap.append(el_('p', 'shop-warn shop-price-notice', shopFlow.notice));
+    shopFlow.notice = null;
+  }
   const section = (title, ...children) => {
     const box = el_('section', 'shop-section');
     box.append(el_('h3', '', title), ...children);
@@ -442,6 +448,20 @@ async function shopFlowPlace() {
     const place = typeof locationTurnContext === 'function' ? locationTurnContext() : null;
     const where = place?.lat != null ? {lat: place.lat, lng: place.lng} : {};
     const prepared = await apiFetch('/v1/actions/orders', {method: 'POST', body: JSON.stringify({payment_method: shopFlow.payment, ...where})});
+    const display = prepared.action?.display || {};
+    if (display.price_changed) {
+      // Bug #10: preparing re-priced the cart (the catalog's price changed since the
+      // checkout was shown) - never confirmed at a price the user didn't see. The
+      // prepared order is cancelled and the checkout shown again at the new price.
+      await apiFetch(`/v1/actions/${encodeURIComponent(prepared.action.id)}/cancel`, {method: 'POST'})
+        .catch(error => console.warn('siru: cancel of the re-priced order failed', error));
+      const changed = (display.price_changes || []).map(c =>
+        `${c.name} ${c.was_paise != null ? `${money(c.was_paise)} → ` : ''}${money(c.now_paise)}`);
+      shopFlow.notice = `Prices changed since you opened checkout${changed.length ? `: ${changed.join('; ')}` : ''}. Review the new total and place the order again.`;
+      await shoppingRefresh();
+      shopFlowShow('checkout');
+      return;
+    }
     const done = await apiFetch(`/v1/actions/${encodeURIComponent(prepared.action.id)}/confirm`, {method: 'POST'});
     const order = done.order || {};
     await shoppingRefresh();

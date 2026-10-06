@@ -33,6 +33,32 @@ function userForgetDevice() {
   for (const key of [...userMemory.keys()]) if (userDataKey(key)) userMemory.delete(key);
 }
 
+// Bug #12B: whether `key` is this user's own. Chats and activity are `<prefix><id>_<session>`
+// (a session id has no "_"); the others are exactly `<prefix><id>` - so user "a" never owns
+// "ab"'s or "a_b"'s keys.
+const USER_SESSION_PREFIXES = ['siru_chat_', 'siru_activity_'];
+function userOwnsKey(key, userId) {
+  return USER_DATA_PREFIXES.some(prefix => {
+    const own = prefix + userId;
+    if (!USER_SESSION_PREFIXES.includes(prefix)) return key === own;
+    return key.startsWith(own + '_') && !key.slice(own.length + 1).includes('_');
+  });
+}
+
+// A sign-in: everything another person left on this device goes (as userForgetDevice),
+// but never the signing-in user's own chats and activity - another tab of theirs, or
+// their previous sign-in here, keeps its history (Bug #12B). No id: everyone's goes.
+function userForgetOthers(userId) {
+  if (!userId) return userForgetDevice();
+  const other = key => userDataKey(key) && !userOwnsKey(key, userId);
+  for (const storage of [localStorage, sessionStorage]) {
+    try {
+      for (const key of Object.keys(storage)) if (other(key)) storage.removeItem(key);
+    } catch {}
+  }
+  for (const key of [...userMemory.keys()]) if (other(key)) userMemory.delete(key);
+}
+
 function sessionValid(session) {
   return Boolean(session?.access_token && session?.user?.id && session.expires_at * 1000 > Date.now());
 }

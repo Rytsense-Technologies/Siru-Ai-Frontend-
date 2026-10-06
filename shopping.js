@@ -446,7 +446,15 @@ function shoppingTurnFinish(turnId, {status = 'answered', reply = '', agent = ''
   // A turn can teach Siru something new (memory/extractor.py). Voice saves it
   // in the background, so look again shortly after.
   if (status === 'answered') memoryRefresh({delayed: true});
-  if (status === 'answered') return shoppingTurnReceipts(turn, placed?.result || null);
+  if (status === 'answered') return shoppingTurnReceipts(turn, placed?.result || null, turnWroteCart(trace));
+}
+
+// Bug #12: whether THIS turn wrote the cart, from its own trace - a step that wrote
+// app_buyer_carts (tracing.py tables_written). null when the trace can't say (none, or
+// steps past its cap were dropped): then the cart's key decides, as before.
+function turnWroteCart(trace) {
+  if (!trace || !Array.isArray(trace.steps) || trace.steps_dropped) return null;
+  return trace.steps.some(step => Array.isArray(step?.tables_written) && step.tables_written.includes('app_buyer_carts'));
 }
 
 function turnAppend(turn, entry) {
@@ -643,7 +651,7 @@ function shoppingCartKey(cart) {
 // After a turn is answered: its order receipt, or - when the turn changed the
 // cart - the whole cart as a bill, in THAT turn's block. Turns are handled one
 // at a time; a reply that changed nothing ("hi", a question) gets no card.
-function shoppingTurnReceipts(turn, order) {
+function shoppingTurnReceipts(turn, order, wroteCart = null) {
   shop.billQueue = shop.billQueue.catch(() => {}).then(async () => {
     if (!getUserId() || !pharmacyApi.mode || turn.owner !== getUserId()) return;
     const generation = shop.generation;
@@ -668,8 +676,10 @@ function shoppingTurnReceipts(turn, order) {
     shopEl.cartStatus.textContent = 'Cart synced';
     if (key === shop.billedKey) return;
     shop.billedKey = key;
-    // The order's receipt already shows what happened to the cart.
-    if (!order) turnReceipt(turn, snapshot);
+    // The order's receipt already shows what happened to the cart. A turn that wrote
+    // no cart (wroteCart false) only catches the key up: a change made outside the
+    // chat (the nearby dialog, a Confirm tap, another tab, voice) is not this turn's.
+    if (!order && wroteCart !== false) turnReceipt(turn, snapshot);
   });
   return shop.billQueue;
 }
@@ -887,7 +897,7 @@ function actionOutcome(data) {
     const added = (data.added || []).map(item => item.name);
     const skipped = (data.skipped || []).map(item => item.name);
     return again + [added.length ? `Added to your cart: ${added.join(', ')}. Nothing is ordered yet.` : '',
-      skipped.length ? `Not added: ${skipped.join(', ')} (needs a valid prescription or is unavailable).` : '']
+      skipped.length ? `Not added: ${(data.skipped || []).map(item => `${item.name} (${item.reason || 'needs a valid prescription or is unavailable'})`).join('; ')}.` : '']
       .filter(Boolean).join(' ');
   }
   return again + 'Done.';

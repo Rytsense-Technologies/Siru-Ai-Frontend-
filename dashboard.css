@@ -566,6 +566,9 @@ html.shop-open, html.shop-open body { overflow: hidden; }
 .merchant-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
 .merchant-head h2 { margin: 4px 0 2px; font-size: 22px; letter-spacing: -.02em; }
 .merchant-head p { margin: 0; }
+/* sec-88: the store picker for an owner of several stores */
+.m-store-picker { display: flex; flex-direction: column; gap: 4px; margin-left: auto; }
+.m-store-picker select { border: 1px solid var(--line, #e3e5ee); border-radius: 10px; padding: 8px 10px; background: white; font: inherit; font-size: 13px; max-width: 260px; }
 .merchant-notice { margin: 0; padding: 10px 14px; border-radius: 12px; background: #fffaeb; border: 1px solid #fedf89; color: #93370d; font-size: 13px; }
 .merchant-body { display: flex; flex-direction: column; gap: 14px; }
 .m-tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }

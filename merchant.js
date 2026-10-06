@@ -41,6 +41,9 @@ const merchant = {
   history: [],          // [{role, content}] - this sign-in's assistant turns
   conversationId: null,
   busy: false,
+  // sec-88: an owner of several stores chooses one (GET /v1/merchant/me/stores); the API checks it is theirs.
+  stores: [],
+  storeId: null,
 };
 
 // ---------- formatting ----------
@@ -141,6 +144,8 @@ function mState(text, tone = 'muted') {
 // ---------- data ----------
 
 function merchantFetch(section, query = '') {
+  // The chosen store (several stores only) goes with every read; the API checks it is the caller's own.
+  if (merchant.storeId) query += `${query ? '&' : '?'}store_id=${encodeURIComponent(merchant.storeId)}`;
   const key = `${section}${query}`;
   if (!merchant.sections.has(key)) {
     const generation = merchant.generation;
@@ -161,7 +166,8 @@ const NOT_CONNECTED = 'provider_not_configured';
 const PAGE_STATES = {
   [NOT_CONNECTED]: 'Not available - provider-service is not connected.',
   no_store: 'No store registered for this account.',
-  several_stores: 'Several stores - choose one in the SIRU app.',
+  several_stores: 'Several stores - choose a store at the top of the page.',
+  not_your_store: 'That store is not one of this account\'s stores.',
 };
 
 function merchantNotConnected(err) { return Boolean(PAGE_STATES[err?.detail?.code]); }
@@ -529,6 +535,7 @@ async function merchantAsk(text) {
   try {
     const reply = await apiFetch('/v1/agents/run', {method: 'POST', body: JSON.stringify({
       user_input: question, history: merchant.history.slice(-20), conversation_id: merchant.conversationId,
+      ...(merchant.storeId ? {store_id: merchant.storeId} : {}),
     })});
     if (generation !== merchant.generation) return;
     const answer = typeof reply.final_output === 'string' ? reply.final_output : '';
@@ -632,6 +639,9 @@ function merchantApplyUser() {
   merchant.history = [];
   merchant.busy = false;
   merchant.storeName = null;
+  merchant.stores = [];
+  merchant.storeId = null;
+  document.getElementById('merchantStorePicker')?.remove();
   merchantEl.merchantLog.replaceChildren();
   merchantEl.merchantBody.replaceChildren();
   merchantEl.merchantSuggestions.hidden = false;
@@ -652,6 +662,62 @@ function merchantApplyUser() {
   merchantEl.merchantName.textContent = merchant.user.name;
   merchantEl.merchantIdLine.textContent = merchant.user.email;
   merchantShow('overview');
+  merchantLoadStores();
+}
+
+// ---------- several stores (sec-88) ----------
+
+function merchantStoreKey() { return `siru_merchant_store_${getUserId()}`; }
+
+// The owner's own stores; with several, a picker in the page head. The choice is kept for this tab
+// (sessionStorage) and checked by the API on every read - never another owner's store.
+async function merchantLoadStores() {
+  const generation = merchant.generation;
+  let stores = [];
+  try {
+    stores = (await apiFetch('/v1/merchant/me/stores')).stores || [];
+  } catch {
+    return;  // no list: the page says what each section says (several stores: choose one)
+  }
+  if (generation !== merchant.generation || stores.length < 2) return;
+  merchant.stores = stores;
+  let saved = null;
+  try { saved = sessionStorage.getItem(merchantStoreKey()); } catch { /* storage blocked: choose again */ }
+  if (stores.some(store => store.id === saved)) merchant.storeId = saved;
+  const label = mEl('label', 'm-store-picker');
+  label.id = 'merchantStorePicker';
+  label.append(mEl('span', 'muted small', 'Store'));
+  const select = document.createElement('select');
+  select.setAttribute('aria-label', 'Choose a store');
+  const prompt = new Option('Choose a store…', '');
+  prompt.disabled = true;
+  select.append(prompt, ...stores.map(store => new Option(store.name || store.id, store.id)));
+  select.value = merchant.storeId || '';
+  select.onchange = () => merchantChooseStore(select.value);
+  label.append(select);
+  merchantEl.merchantRefresh.before(label);
+  if (merchant.storeId) merchantChooseStore(merchant.storeId);
+}
+
+function merchantChooseStore(storeId) {
+  const store = merchant.stores.find(s => s.id === storeId);
+  if (!store) return;
+  merchant.storeId = storeId;
+  try { sessionStorage.setItem(merchantStoreKey(), storeId); } catch { /* kept for this page only */ }
+  // sec-89: nothing of the store chosen before stays beside this one's figures - a late reply is
+  // dropped, the name is this store's (from the owner's own list) on every page at once, and the
+  // assistant starts this store's own conversation (no other store's turns as its context).
+  merchant.generation++;
+  merchant.sections.clear();
+  merchant.storeName = null;
+  merchantStoreName(store.name || store.id);
+  merchant.history = [];
+  merchant.conversationId = `merchant-${crypto.randomUUID()}`;
+  merchant.busy = false;
+  merchantEl.merchantLog.replaceChildren();
+  merchantEl.merchantSuggestions.hidden = false;
+  merchantEl.merchantSend.disabled = false;
+  merchantShow(merchant.view);
 }
 
 for (const view of MERCHANT_VIEWS) {
