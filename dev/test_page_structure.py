@@ -131,7 +131,10 @@ class PageStructureTest(unittest.TestCase):
             # shopping.js / location-ui.js list their ids in an array
             for block in re.findall(r"Object\.fromEntries\(\[(.*?)\]\.map", text, flags=re.S):
                 wanted |= set(re.findall(r"['\"]([A-Za-z][\w-]*)['\"]", block))
-            missing |= {f"{script}: {i}" for i in wanted - ids}
+            # An element the script creates itself and looks up again to replace it (merchant.js
+            # "#merchantStorePicker", built at run time per store list) is not the page's to declare.
+            created = set(re.findall(r"\.id\s*=\s*['\"]([A-Za-z][\w-]*)['\"]", text))
+            missing |= {f"{script}: {i}" for i in wanted - ids - created}
         # Known and older than this test: app.js's unused "demo panel" code
         # (loadProducts - never called) still looks up #productList.
         self.assertEqual(missing - {"app.js: productList"}, set())
