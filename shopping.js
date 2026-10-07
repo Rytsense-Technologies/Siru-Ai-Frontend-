@@ -830,11 +830,18 @@ function shoppingOfferCard(card, time) {
   ].filter(Boolean).join(' · ');
   if (facts) where.append(el_('span', 'muted small', facts));
   store.append(where);
-  box.append(store, productRow(card.product, card.product.inStock ? 'In stock' : 'Out of stock'));
+  // The listing's own stock as the server read it - true, false, or null when not known (no badge):
+  // never "In stock" by default (production, 7 Oct: the card said In stock, the add said it wasn't).
+  const stock = card.product.inStock === true ? 'In stock' : card.product.inStock === false ? 'Out of stock' : '';
+  box.append(store, productRow(card.product, stock));
   if (card.product.prescriptionRequired) box.append(el_('p', 'card-note warn', 'Needs a valid prescription.'));
   if (card.note) box.append(el_('p', 'card-note', card.note));
   const add = el_('button', 'card-action', 'Add to cart');
   add.type = 'button';
+  if (card.product.inStock === false) {
+    add.disabled = true;
+    add.title = 'Out of stock';
+  }
   // "Add it": the offer this card shows - that listing (its product and
   // pharmacy ids), the same as saying "yes". Before, it sent "Add <name> to my
   // cart", which picked the pharmacy again (the cart's, else the nearest) - not

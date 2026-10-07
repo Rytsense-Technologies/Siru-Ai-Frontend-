@@ -184,6 +184,26 @@ test('only the latest pharmacy card adds - an older one\'s offer is gone', async
   expect(sent.eyebrow).toBe('Your pharmacy');
 });
 
+test('an offer card shows only the stock its listing says - never "In stock" by default', async ({ page }) => {
+  // Production, 7 Oct: every card said "In stock", then "Add it" read the real listing and said it wasn't.
+  await page.evaluate(() => signInAs('buyer-a'));
+  const cards = await page.evaluate(() => {
+    const card = (name, inStock) => ({kind: 'pharmacy_offer', pharmacy: {name: 'Sri Balaji Medicals', distanceKm: 1.4},
+      product: {id: `id-${name}`, name, pricePaise: 4700, inStock}, alternatives: []});
+    return [['Digene tablets', true], ['Glucon-D', false], ['Cerelac', null]].map(([name, inStock]) => {
+      const entry = shoppingOfferCard(card(name, inStock), `2026-10-07T10:00:0${name.length % 9}.000Z`);
+      shopEl.chatMessages.append(entry);
+      return {badge: entry.querySelector('.stock-badge')?.textContent ?? null,
+              addDisabled: entry.querySelector('.card-action').disabled};
+    });
+  });
+  expect(cards).toEqual([
+    {badge: 'In stock', addDisabled: false},
+    {badge: 'Out of stock', addDisabled: true},
+    {badge: null, addDisabled: false},   // not known: no badge drawn
+  ]);
+});
+
 test('two product cards in one answer each add their own product, by name', async ({ page }) => {
   // "Here are the thermometer options I found." - a card each. Before, only the last card's
   // button worked ("This offer has been replaced") and it added whichever offer was held.
