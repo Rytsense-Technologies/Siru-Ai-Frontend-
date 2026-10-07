@@ -78,3 +78,22 @@ test('the location row shows the whole measurement: origin, each pharmacy, the m
   expect(detail).toContain('haversine (straight line)');
   expect(detail).toContain("ETA source: provider.stores.estimated_delivery_min (the pharmacy's own estimate)");
 });
+
+test('a direct tool row shows its exact args and the displayed list it held - and that it selected nothing', async ({ page }) => {
+  const detail = await page.evaluate(async () => {
+    const id = crypto.randomUUID();
+    shoppingTurn(id, {userText: 'list the 3 pharmacies', source: 'text'});
+    await shoppingTurnFinish(id, {status: 'answered', reply: 'These are the nearby pharmacies near your location.', cards: [], trace: {
+      steps: [{id: 1, kind: 'direct_tool', name: 'nearby_pharmacies', status: 'done', input: {count: 3},
+        result: {displayed_list: [
+          {displayed_index: 1, pharmacy_id: 'id-guru', pharmacy_name: 'Guru Pharmacy', distance_km: 0.4},
+          {displayed_index: 2, pharmacy_id: 'id-sai', pharmacy_name: 'Sri Sai Pharmacy', distance_km: 1.5, availability: 'in_stock'}],
+          selected_pharmacy: 'none - a list selects nothing'}}],
+      io: {calls: [], checkpoints: [], data: []}, agent: 'direct_tool:nearby_pharmacies', total_ms: 90, usage: {llm_calls: 0}}});
+    panelShow('tools');
+    return shopEl.activityList.querySelector(`[data-turn-id="${id}"]`).textContent;
+  });
+  expect(detail).toContain('args {"count":3}');
+  expect(detail).toContain('1) Guru Pharmacy [id-guru] 0.4 km; 2) Sri Sai Pharmacy [id-sai] 1.5 km in_stock');
+  expect(detail).toContain('selected_pharmacy none - a list selects nothing');
+});

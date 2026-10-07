@@ -1665,8 +1665,15 @@ function activityStep(step, calls = [], checkpoints = [], agents = []) {
     // Its exact arguments, and what they resolved to (the displayed list's entry: its number, pharmacy id,
     // product id) - so a selection can be checked against the list on screen.
     const args = step.input && Object.keys(step.input).length ? `args ${JSON.stringify(step.input)}` : '';
+    // A displayed list: each row's number, name, pharmacy id, distance and availability.
+    const value = v => Array.isArray(v)
+      ? v.map(r => r && typeof r === 'object'
+        ? `${r.displayed_index ?? ''}) ${r.pharmacy_name ?? ''} [${r.pharmacy_id ?? ''}]`
+          + `${r.distance_km != null ? ` ${r.distance_km} km` : ''}${r.availability ? ` ${r.availability}` : ''}`
+        : String(r)).join('; ')
+      : v;
     const resolved = step.result && typeof step.result === 'object' && Object.keys(step.result).length
-      ? `resolved ${Object.entries(step.result).map(([k, v]) => `${k} ${v}`).join(', ')}` : '';
+      ? `resolved ${Object.entries(step.result).map(([k, v]) => `${k} ${value(v)}`).join(', ')}` : '';
     return inspectorRow('DIRECT', {name: `direct_tool:${step.name}`, tone: fallback ? 'warn' : 'direct',
       badges: [el_('span', 'trace-tag', fallback ? 'fell back to the supervisor' : 'no agent · no model')],
       time: activityMs(step.duration_ms), detail: [args, resolved].filter(Boolean).join(' · ')});
