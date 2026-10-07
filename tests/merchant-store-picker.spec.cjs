@@ -58,8 +58,9 @@ test('an owner of several stores chooses one, and every read and question is for
 
   await picker.selectOption('s2');
   await expect(page.locator('#merchantTitle')).toHaveText('Adyar Pharmacy');
-  expect(seen.reads.filter(r => r.startsWith('dashboard:'))).toContain('dashboard:s2');
-  expect(seen.reads.filter(r => r.endsWith(':s2')).length).toBeGreaterThan(3);  // every panel, for that store
+  // The panels load after the title: waited for, not counted at once (it flaked at 1 or 3 of them).
+  await expect.poll(() => seen.reads.filter(r => r.startsWith('dashboard:'))).toContain('dashboard:s2');
+  await expect.poll(() => seen.reads.filter(r => r.endsWith(':s2')).length).toBeGreaterThan(3);  // every panel, for that store
 
   await page.evaluate(() => merchantAsk('how are sales today'));
   expect(seen.asks.at(-1)).toMatchObject({user_input: 'how are sales today', store_id: 's2'});

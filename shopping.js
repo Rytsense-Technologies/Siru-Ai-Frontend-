@@ -1819,6 +1819,16 @@ function activityEntry({turn_id, user, timestamp, trace, source = 'text', reply 
   const checkpoints = [...(trace.io?.checkpoints || [])];
   const agents = (trace.steps || []).filter(step => step.kind === 'agent');
   const list = el_('ol', 'trace-rows');
+  // Which user, conversation, turn and builds answered - so two browsers or laptops can be compared exactly
+  // (production, 7 Oct). Ids and versions only, from the server's turn_end (concierge.py _turn_identity).
+  const id = trace.identity;
+  if (id) {
+    list.append(inspectorRow('TURN', {name: `turn ${id.turn_id || '?'}`, tone: 'state',
+      badges: [el_('span', 'trace-tag', id.environment || 'unknown env')],
+      detail: [`conversation ${id.conversation_id || 'none'}`, `user ${id.user_id || '?'}`,
+        `frontend ${typeof FRONTEND_BUILD === 'string' ? FRONTEND_BUILD : 'unknown'}`,
+        `backend ${id.backend_build || 'unknown'}`, `state ${id.state_version || '?'}`].join(' · ')}));
+  }
   (trace.steps || []).forEach(step => list.append(activityStep(step, calls, checkpoints, agents)));
   if (!tools.length) list.append(el_('li', 'trace-empty', 'No tool calls for this turn.'));
   if (reply) list.append(inspectorRow('OUT', {name: 'text', detail: reply.length > 160 ? `${reply.slice(0, 160)}…` : reply}));

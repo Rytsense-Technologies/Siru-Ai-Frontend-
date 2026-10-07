@@ -825,3 +825,9 @@ body {
 .attach-name { flex: 1; min-width: 0; font-size: 13px; color: #334155; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attach-remove { border: 0; background: transparent; font-size: 20px; line-height: 1; color: #64748b; cursor: pointer; padding: 2px 6px; }
 .attach-remove:hover { color: #0f172a; }
+
+/* A newer frontend build is deployed than this tab is running (version.js). */
+.build-banner {
+  position: sticky; top: 0; z-index: 50; padding: 8px 16px; text-align: center;
+  background: var(--amber-bg); color: var(--amber); border-bottom: 1px solid var(--border); font-size: 14px;
+}

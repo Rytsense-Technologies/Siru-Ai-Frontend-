@@ -97,7 +97,7 @@ const concierge = {
         rejectTurn(error);
       } else if (event.type === 'turn_end') {
         answer.trace = event.trace ? {...event.trace, trace_id:event.trace_id, llm_calls:event.llm_calls,
-          latency_ms:event.latency_ms, model:event.model, io} : null;
+          latency_ms:event.latency_ms, model:event.model, io, identity:event.identity || null} : null;
         answer.traceId = event.trace_id;
         if (event.route === 'memory_command' && typeof memoryRefresh === 'function') memoryRefresh();
         finish();
