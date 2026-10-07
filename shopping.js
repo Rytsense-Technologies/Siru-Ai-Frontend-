@@ -186,6 +186,15 @@ function shoppingMessage(text, role = "assistant", source = "text", id = crypto.
   return bubble;
 }
 
+// The page is being reloaded or left: requests still in flight are cut off by the browser. That is not
+// the pharmacy failing - no "Service is temporarily unavailable" notice may be saved into the chat for it
+// (live, 7 Oct: a reload aborted the shelf request and the next page showed "I couldn't connect to the
+// pharmacy... I'll keep trying" while every service was healthy).
+let shoppingPageLeaving = false;
+window.addEventListener('pagehide', () => { shoppingPageLeaving = true; });
+window.addEventListener('beforeunload', () => { shoppingPageLeaving = true; });
+window.addEventListener('pageshow', () => { shoppingPageLeaving = false; });
+
 // A notice that isn't repeated when the same one is already the latest message.
 function shoppingNotice(text, source = 'text') {
   const last = shopEl.chatMessages.lastElementChild?.querySelector('.chat-bubble');
@@ -813,6 +822,9 @@ function shoppingOfferCard(card, time) {
   const {entry} = chatEntry({label: 'Pharmacy', time, className: 'card-entry'});
   const box = el_('div', 'chat-card offer-card');
   box.dataset.product = card.product.name;
+  // This listing's own ids: the same medicine at another pharmacy is another listing.
+  box.dataset.productId = card.product.id || '';
+  box.dataset.storeId = card.pharmacy.storeId || '';
   // The answer it came with: "Here are the thermometers I found." draws a card each.
   box.dataset.answer = String(time ?? '');
   // The user's pharmacy (chosen from the list, or named) - or, for "Here is X I
@@ -826,7 +838,9 @@ function shoppingOfferCard(card, time) {
   where.append(el_('strong', '', card.pharmacy.name || 'Pharmacy'));
   const facts = [
     card.pharmacy.distanceKm != null ? `${card.pharmacy.distanceKm} km away (straight line)` : '',
-    card.pharmacy.etaMin ? `delivery in ~${card.pharmacy.etaMin} min` : 'delivery time —',
+    // The pharmacy's own stated delivery estimate (provider.stores), not calculated from the distance -
+    // said as such; none recorded: said so (production brief, 7 Oct).
+    card.pharmacy.etaMin ? `pharmacy's delivery estimate ${card.pharmacy.etaMin} min` : 'Delivery time unavailable',
   ].filter(Boolean).join(' · ');
   if (facts) where.append(el_('span', 'muted small', facts));
   store.append(where);
@@ -1367,12 +1381,18 @@ function shoppingUiCard(card, time = null) {
   return entry;
 }
 
-// An offer card's button once that medicine is in the cart.
+// An offer card's button once that listing is in the cart - its own product id, or (a card without one)
+// its name in a cart from the same pharmacy. Never by name alone (live, 7 Oct: Dolo 650 from Kumaran
+// Medicals in the cart marked the Arun Medicals Dolo 650 offer "In cart" and disabled its button).
 function shoppingMarkInCart() {
-  const names = new Set((shop.cart?.items || []).map(item => item.name));
+  const items = shop.cart?.items || [];
+  const ids = new Set(items.map(item => item.id).filter(Boolean));
+  const names = new Set(items.map(item => item.name));
+  const cartStore = shop.cart?.storeId || '';
   shopEl.chatMessages.querySelectorAll('.offer-card').forEach(box => {
     const button = box.querySelector('.card-action');
-    const inCart = names.has(box.dataset.product);
+    const inCart = box.dataset.productId ? ids.has(box.dataset.productId)
+      : names.has(box.dataset.product) && !!cartStore && cartStore === box.dataset.storeId;
     button.disabled = inCart || shop.busy;
     button.textContent = inCart ? 'In cart' : 'Add to cart';
   });
@@ -1642,9 +1662,14 @@ function activityStep(step, calls = [], checkpoints = [], agents = []) {
   if (step.kind === 'direct_tool') {
     // A deterministic route's tool, called by the pre-router itself: no agent, no model.
     const fallback = step.status === 'fallback';
+    // Its exact arguments, and what they resolved to (the displayed list's entry: its number, pharmacy id,
+    // product id) - so a selection can be checked against the list on screen.
+    const args = step.input && Object.keys(step.input).length ? `args ${JSON.stringify(step.input)}` : '';
+    const resolved = step.result && typeof step.result === 'object' && Object.keys(step.result).length
+      ? `resolved ${Object.entries(step.result).map(([k, v]) => `${k} ${v}`).join(', ')}` : '';
     return inspectorRow('DIRECT', {name: `direct_tool:${step.name}`, tone: fallback ? 'warn' : 'direct',
       badges: [el_('span', 'trace-tag', fallback ? 'fell back to the supervisor' : 'no agent · no model')],
-      time: activityMs(step.duration_ms)});
+      time: activityMs(step.duration_ms), detail: [args, resolved].filter(Boolean).join(' · ')});
   }
   if (step.kind === 'agent') {
     return inspectorRow('AGENT', {name: step.name, badges: [statusBadge(step.status === 'running' ? '' : step.status)],
@@ -1685,14 +1710,19 @@ function activityStep(step, calls = [], checkpoints = [], agents = []) {
   }
   if (step.kind === 'location') {
     // The nearest-pharmacy ranking (nearby.py): what it measured from and how many
-    // stores had coordinates - not a tool call. Outside development: the counts only.
+    // stores had coordinates - not a tool call. Outside development: no origin (the user's own coordinates).
     const none = step.name === 'none';
+    // The measurement whole, so any distance can be checked: the origin, each pharmacy's own
+    // coordinates and distance, the method (straight line), and where the delivery time comes from.
     const nearest = (step.nearest || []).slice(0, 5)
-      .map(s => `${s.store}${s.distance_km != null ? ` ${s.distance_km} km` : ''}`).join(', ');
+      .map(s => `${s.store}${s.distance_km != null ? ` ${s.distance_km} km` : ''}`
+        + `${s.lat != null ? ` (${s.lat}, ${s.lng})` : ''}${s.eta_min != null ? ` · ETA ${s.eta_min} min` : ''}`).join('; ');
+    const origin = step.origin ? `from (${step.origin.lat}, ${step.origin.lng})` : '';
     return inspectorRow('LOCATION', {name: none ? 'no location' : step.name, tone: none ? 'warn' : 'state',
       badges: [step.stores_located != null
-        && el_('span', 'trace-tag', `${step.stores_located} of ${step.stores_queried ?? '?'} stores located`)],
-      detail: nearest});
+        && el_('span', 'trace-tag', `${step.stores_located} of ${step.stores_queried ?? '?'} stores located`),
+        step.distance_method && el_('span', 'trace-tag', step.distance_method)],
+      detail: [origin, nearest, step.eta_source && `ETA source: ${step.eta_source}`].filter(Boolean).join(' · ')});
   }
   if (step.kind === 'confirmation') {
     // What a "yes" may act on (offers.py): asked, used, or let go - and why.
@@ -2487,6 +2517,7 @@ async function shoppingRefresh() {
     shoppingRenderCart(state.cart);
     shopEl.cartStatus.textContent = "Cart synced";
   } catch (err) {
+    if (shoppingPageLeaving) return;  // cut off by a reload or navigation - not a failure
     if (generation === shop.generation) {
       shopEl.cartStatus.textContent = `Cart unavailable: ${pharmacyError(err)}`;
       if (!shop.cart) {
@@ -2787,6 +2818,7 @@ async function shoppingLoadCatalog() {
       await shoppingRefresh();
     }
   } catch (err) {
+    if (shoppingPageLeaving) return;  // cut off by a reload or navigation - not a failure
     if (pharmacyApi.mode) return;  // connected; a later step (cart refresh) reports its own error
     shop.loadError = err;
     shoppingScheduleRetry();

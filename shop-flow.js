@@ -171,7 +171,8 @@ async function shopFlowPharmacies({fresh = false} = {}) {
     // The server's measured distance - a straight line from the user's location, not
     // the road distance; a store without one is never listed (no made-up distance).
     // The store's own delivery time, or "—" - never an estimate made up here.
-    const meta = [`${store.distanceKm} km away (straight line)`, store.etaMin ? `~${store.etaMin} min` : 'delivery time —',
+    const meta = [`${store.distanceKm} km away (straight line)`,
+      store.etaMin ? `pharmacy's delivery estimate ${store.etaMin} min` : 'Delivery time unavailable',
       store.deliversHere === false ? "doesn't deliver here" : ''].filter(Boolean).join(' · ');
     info.append(top, el_('span', 'shop-store-meta', meta));
     const where = store.area && !String(store.address || '').includes(store.area)
@@ -295,6 +296,7 @@ async function shopFlowCartChange(run) {
     await shoppingRefresh();
   } catch (error) {
     if (error.status === 409 && error.detail?.conflict === 'cart_store') throw error;
+    if (shoppingPageLeaving) return;  // cut off by a reload or navigation - not a failure (shopping.js)
     shoppingNotice(`Couldn't update your cart. ${pharmacyError(error)}`);
   } finally {
     shopFlowBusy = false;

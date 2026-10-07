@@ -56,3 +56,25 @@ test("the turn's Tool calls card includes them", async ({ page }) => {
   expect(ai).toContain('selection_failed');
   expect(ai).toContain('I need Dolo 650');
 });
+
+test('the location row shows the whole measurement: origin, each pharmacy, the method and the ETA source', async ({ page }) => {
+  const detail = await page.evaluate(async () => {
+    const id = crypto.randomUUID();
+    shoppingTurn(id, {userText: 'nearby pharmacies', source: 'text'});
+    await shoppingTurnFinish(id, {status: 'answered', reply: 'These are the nearby pharmacies.', cards: [], trace: {
+      steps: [{id: 1, kind: 'location', name: 'user_location', status: 'done', stores_queried: 21, stores_located: 21,
+        origin: {lat: 12.966, lng: 80.226}, distance_method: 'haversine (straight line)',
+        eta_source: "provider.stores.estimated_delivery_min (the pharmacy's own estimate)",
+        nearest: [{store: 'Ganesh Medicals', distance_km: 1.2, lat: 12.97, lng: 80.215, eta_min: 30},
+                  {store: 'Ranjith Pharmacy', distance_km: 1.2, lat: 12.958, lng: 80.231, eta_min: null}]}],
+      io: {calls: [], checkpoints: [], data: []}, agent: 'direct_tool:nearby_pharmacies', total_ms: 90, usage: {llm_calls: 0}}});
+    panelShow('tools');
+    return shopEl.activityList.querySelector(`[data-turn-id="${id}"]`).textContent;
+  });
+  expect(detail).toContain('from (12.966, 80.226)');
+  expect(detail).toContain('Ganesh Medicals 1.2 km (12.97, 80.215) · ETA 30 min');
+  expect(detail).toContain('Ranjith Pharmacy 1.2 km (12.958, 80.231)');
+  expect(detail).not.toMatch(/80\.231\) · ETA \d/);  // no estimate: none shown
+  expect(detail).toContain('haversine (straight line)');
+  expect(detail).toContain("ETA source: provider.stores.estimated_delivery_min (the pharmacy's own estimate)");
+});

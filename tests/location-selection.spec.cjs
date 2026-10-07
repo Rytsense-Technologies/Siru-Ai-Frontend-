@@ -113,6 +113,8 @@ test('the nearby screen measures from the confirmed address and never reads GPS 
   await page.click('#shopNearbyBtn');
   await expect(page.locator('#shopBody')).toContainText('Arun Medicals');
   await expect(page.locator('#shopBody')).toContainText('62.4 km away (straight line)');  // the server's distance from Arakkonam - not a road distance
+  // The pharmacy's own estimate as the server sent it - no "~", nothing computed from the distance.
+  await expect(page.locator('#shopBody')).toContainText("62.4 km away (straight line) · pharmacy's delivery estimate 20 min");
   await expect(page.locator('#shopSub')).toContainText('Measured from Home: #1/15, Gandhi Road, Palanipet, Arakkonam');
   expect(api.nearby).toEqual([{lat: 13.084, lng: 79.67}]);
   expect(await page.evaluate(() => gpsCalls)).toBe(0);
@@ -231,7 +233,7 @@ test('two product cards in one answer each add their own product, by name', asyn
 
 // Missing values are "—" in their place - never invented, never "null"/"undefined"/"0 km"
 // (the store's delivery time and delivery charge are the client database's own).
-test('a pharmacy without a recorded delivery time keeps its row and shows a dash', async ({ page }) => {
+test('a pharmacy without a recorded delivery time keeps its row and says it is unavailable', async ({ page }) => {
   api.eta = null;
   await page.evaluate(() => signInAs('buyer-a'));
   await typeAddress(page, '#1/15, Gandhi Road, Palanipet, Arakkonam', '631001');
@@ -239,7 +241,7 @@ test('a pharmacy without a recorded delivery time keeps its row and shows a dash
   await page.click('#shopNearbyBtn');
   const body = page.locator('#shopBody');
   await expect(body).toContainText('Arun Medicals');
-  await expect(body).toContainText('62.4 km away (straight line) · delivery time —');
+  await expect(body).toContainText('62.4 km away (straight line) · Delivery time unavailable');
   for (const bad of ['null', 'undefined', 'NaN', '~0 min']) await expect(body).not.toContainText(bad);
 });
 
@@ -274,4 +276,21 @@ test('a new location reloads the shelf once, not twice', async ({ page }) => {
   await expect.poll(() => api.catalogLoads).toBe(before + 1);
   await page.waitForTimeout(500);
   expect(api.catalogLoads).toBe(before + 1);  // once per change (it was twice)
+});
+
+test('"In cart" is that listing in the cart - never the same medicine from another pharmacy', async ({ page }) => {
+  // Live, 7 Oct: Dolo 650 from Kumaran Medicals in the cart marked the Arun Medicals Dolo 650 offer
+  // "In cart" and disabled its Add button (matched by name alone).
+  await page.evaluate(() => signInAs('buyer-a'));
+  const marks = await page.evaluate(async () => {
+    const card = (store, id) => ({kind: 'pharmacy_offer', pharmacy: {storeId: `s-${store}`, name: store, distanceKm: 0.6},
+      product: {id, name: 'Dolo 650', pricePaise: 3360, inStock: true}, alternatives: []});
+    shopEl.chatMessages.append(shoppingOfferCard(card('Arun Medicals', 'dolo-arun'), '2026-10-07T10:00:00.000Z'));
+    shopEl.chatMessages.append(shoppingOfferCard(card('Kumaran Medicals', 'dolo-kumaran'), '2026-10-07T10:00:01.000Z'));
+    shop.cart = {items: [{id: 'dolo-kumaran', name: 'Dolo 650', qty: 1}], storeId: 's-Kumaran Medicals'};
+    shoppingMarkInCart();
+    return [...shopEl.chatMessages.querySelectorAll('.offer-card')].map(box =>
+      [box.querySelector('.card-store strong').textContent, box.querySelector('.card-action').textContent]);
+  });
+  expect(marks).toEqual([['Arun Medicals', 'Add to cart'], ['Kumaran Medicals', 'In cart']]);
 });
