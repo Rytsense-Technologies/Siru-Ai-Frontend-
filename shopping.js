@@ -1828,6 +1828,22 @@ function activityEntry({turn_id, user, timestamp, trace, source = 'text', reply 
       detail: [`conversation ${id.conversation_id || 'none'}`, `user ${id.user_id || '?'}`,
         `frontend ${typeof FRONTEND_BUILD === 'string' ? FRONTEND_BUILD : 'unknown'}`,
         `backend ${id.backend_build || 'unknown'}`, `state ${id.state_version || '?'}`].join(' · ')}));
+    // How the turn was read and the conversation's state after it (production, 8 Oct): the intent and entity,
+    // the product, the pharmacy list as numbered on the card, the pharmacy chosen - and which model(s) ran.
+    const intent = id.intent;
+    if (intent && (intent.intent || intent.domain)) {
+      list.append(inspectorRow('INTENT', {name: intent.intent || intent.domain, tone: 'state',
+        detail: [intent.domain && `domain ${intent.domain}`, intent.action && `action ${intent.action}`,
+          intent.entity && `entity ${intent.entity}`].filter(Boolean).join(' · ') || undefined}));
+    }
+    const st = id.state;
+    if (st) {
+      list.append(inspectorRow('STATE', {name: st.product ? `product ${st.product}` : 'no product', tone: 'state',
+        detail: [st.list?.length ? `list ${st.list_id}: ${st.list.join('; ')}` : 'no pharmacy list',
+          `selected ${st.selected || 'none'}`, st.offer ? 'offer waiting for yes' : 'no offer'].join(' · ')}));
+    }
+    const models = Object.keys(trace.usage?.by_model || {});
+    list.append(inspectorRow('MODEL', {name: models.length ? models.join(', ') : 'no model call', tone: 'state'}));
   }
   (trace.steps || []).forEach(step => list.append(activityStep(step, calls, checkpoints, agents)));
   if (!tools.length) list.append(el_('li', 'trace-empty', 'No tool calls for this turn.'));

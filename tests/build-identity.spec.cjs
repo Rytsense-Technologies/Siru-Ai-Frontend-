@@ -49,3 +49,29 @@ test("the Inspector names each turn's user, conversation, turn, builds and state
     'state f00d', 'production']) expect(detail).toContain(part);
   expect(detail).toContain(`frontend ${await page.evaluate(() => FRONTEND_BUILD)}`);
 });
+
+test("the Inspector shows the turn's intent, the conversation's state and the model used", async ({ page }) => {
+  await page.evaluate(async () => {
+    authSave({access_token: 'token', expires_at: Date.now() / 1000 + 3600, user: {id: 'build-user', role: 'buyer', name: 'B'}});
+    await applySignedInUser();
+  });
+  await page.waitForFunction(() => locEl.locationDialog.open);
+  await page.evaluate(() => locationClose());
+  const detail = await page.evaluate(async () => {
+    shoppingEnsureSession();
+    const id = crypto.randomUUID();
+    shoppingTurn(id, {userText: 'second one', source: 'text'});
+    await shoppingTurnFinish(id, {status: 'answered', reply: 'Cetirizine 10 mg is in stock at Beta.', cards: [], trace: {
+      steps: [], io: {calls: [], checkpoints: [], data: []}, agent: 'direct_tool:select_pharmacy', total_ms: 90,
+      usage: {llm_calls: 1, by_model: {'gemini-flash-lite-latest': {}}},
+      identity: {user_id: 'build-user', conversation_id: 'conv-2', turn_id: 'req-2', backend_build: 'unknown/abc',
+        environment: 'production', state_version: 'beef',
+        intent: {domain: 'commerce', intent: 'select_pharmacy', action: '', entity: 'Cetirizine 10 mg'},
+        state: {product: 'Cetirizine 10 mg', list_id: '1a2b3c4d', list: ['1) Alpha', '2) Beta'], selected: 'Beta', offer: true}}}});
+    panelShow('tools');
+    return shopEl.activityList.querySelector(`[data-turn-id="${id}"]`).textContent;
+  });
+  for (const part of ['select_pharmacy', 'domain commerce', 'entity Cetirizine 10 mg', 'product Cetirizine 10 mg',
+    'list 1a2b3c4d: 1) Alpha; 2) Beta', 'selected Beta', 'offer waiting for yes', 'gemini-flash-lite-latest'])
+    expect(detail).toContain(part);
+});
