@@ -122,15 +122,17 @@ el.askForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (shop.busy) return;
   const userInput = el.askInput.value.trim();
-  // A photo waiting above the input (pasted or picked) goes first, then any typed text.
+  // A photo waiting above the input (pasted or picked) and any typed text go as ONE turn:
+  // "order these from Apollo" is read with the prescription it is about.
   const photo = photoPending?.file || null;
   if (!userInput && !photo) return;
   el.askInput.value = "";
   if (photo) {
     photoClear();
-    await shoppingSendPhoto(photo);
+    await shoppingSendPhoto(photo, userInput);
+    return;
   }
-  if (userInput) await shoppingSubmit(userInput);
+  await shoppingSubmit(userInput);
 });
 
 function renderAskResult(data) {

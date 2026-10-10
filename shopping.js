@@ -1286,6 +1286,7 @@ async function shoppingPrepareBooking(doctor, slot, dateLabel) {
   if (shop.busy || !getUserId()) return;
   const owner = getUserId();
   const generation = shop.generation;
+  const wipes = deviceWipeCount();
   const turnId = crypto.randomUUID();
   shop.busy = true;
   shoppingControls();
@@ -1295,9 +1296,13 @@ async function shoppingPrepareBooking(doctor, slot, dateLabel) {
     const data = await apiFetch('/v1/actions/bookings', {method: 'POST', body: JSON.stringify({
       doctor_code: doctor.code, start_time: slot.startTime, mode: slot.mode || null})});
     if (generation !== shop.generation) {
-      // The user changed meanwhile: the prepared booking goes to its owner's history only.
-      Object.assign(turn.record, {status: 'answered', reply, cards: [data.card]});
-      userSaveMessage(owner, turn.record);
+      // The user changed meanwhile: the prepared booking goes to its owner's
+      // history only - and not even there once the device was wiped (they
+      // signed out, or someone new signed in): nothing of theirs stays here.
+      if (wipes === deviceWipeCount()) {
+        Object.assign(turn.record, {status: 'answered', reply, cards: [data.card]});
+        userSaveMessage(owner, turn.record);
+      }
       return;
     }
     shoppingTurnFinish(turnId, {reply, cards: [data.card]});
@@ -2493,6 +2498,7 @@ async function shoppingSubmit(text) {
   if (shop.busy || !getUserId()) return;
   const owner = getUserId();
   const generation = shop.generation;
+  const wipes = deviceWipeCount();
   const turnId = crypto.randomUUID();
   shoppingEnsureSession();
   shop.busy = true;
@@ -2511,9 +2517,13 @@ async function shoppingSubmit(text) {
     });
     activityLiveEnd(live);
     if (generation !== shop.generation) {
-      // The user changed meanwhile: keep the reply in the owner's history only.
-      Object.assign(turn.record, {status: 'answered', reply: result.message, agent: result.trace?.agent || ''});
-      userSaveMessage(owner, turn.record);
+      // The user changed meanwhile: keep the reply in the owner's history only -
+      // and not even there once the device was wiped (they signed out, or
+      // someone new signed in): nothing of theirs stays on this device.
+      if (wipes === deviceWipeCount()) {
+        Object.assign(turn.record, {status: 'answered', reply: result.message, agent: result.trace?.agent || ''});
+        userSaveMessage(owner, turn.record);
+      }
       return;
     }
     await shoppingTurnFinish(turnId, {status: 'answered', reply: result.message, agent: result.trace?.agent,
@@ -2715,15 +2725,15 @@ function photoClear() {
 // A photo (a prescription, or a medicine's pack) as a turn: read on the server,
 // the medicines read clearly looked up in the catalog - the reply, its cards
 // and its trace like any turn. Nothing is ordered from it.
-async function shoppingSendPhoto(file) {
+async function shoppingSendPhoto(file, text = '') {
   if (!file || shop.busy || !getUserId()) return;
   const generation = shop.generation;
   const turnId = crypto.randomUUID();
   shoppingEnsureSession();
   shop.busy = true;
   shoppingControls();
-  const turn = shoppingTurn(turnId, {userText: `Photo: ${file.name && file.name !== 'image.png' ? file.name : 'pasted photo'}`,
-    source: 'text'});
+  const label = `Photo: ${file.name && file.name !== 'image.png' ? file.name : 'pasted photo'}`;
+  const turn = shoppingTurn(turnId, {userText: text ? `${label}: ${text}` : label, source: 'text'});
   const live = activityLiveStart(turn);
   try {
     const image = await new Promise((resolve, reject) => {
@@ -2735,7 +2745,7 @@ async function shoppingSendPhoto(file) {
     const result = await pharmacyApi.photo(image, file.type, step => {
       activityLiveStep(live, step);
       turnActivityStep(turn, step);
-    });
+    }, text);
     activityLiveEnd(live);
     if (generation !== shop.generation) return;
     await shoppingTurnFinish(turnId, {status: 'answered', reply: result.message, agent: result.trace?.agent,
