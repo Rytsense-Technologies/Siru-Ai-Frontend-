@@ -251,11 +251,15 @@ const pharmacyApi = {
   // (POST /v1/concierge/turn, input.type "upload"): read by the vision model
   // on the server, the medicines read clearly are looked up in the catalog,
   // and the turn's trace - tools, tables - reaches the inspector like any turn.
-  async photo(imageB64, mimeType, onStep = null) {
+  // `text`: what was typed with the photo ("order these from Apollo") - the same turn, so the
+  // server reads the request with the prescription it is about.
+  async photo(imageB64, mimeType, onStep = null, text = '') {
     if (this.mode !== 'sandbox') throw new Error('Connect to the pharmacy first.');
+    const input = {type:'upload', image_b64:imageB64, mime_type:mimeType};
+    if (text) input.text = text;
     const turn = await concierge.turn({
       session_id:shoppingEnsureSession(), user_id:getUserId(), channel:'chat',
-      input:{type:'upload', image_b64:imageB64, mime_type:mimeType}, history:[], context:{},
+      input, history:[], context:{location:locationTurnContext()},
     }, onStep);
     return {message:turn.text || "The photo couldn't be read. Please try again.", trace:turn.trace, cards:turn.cards};
   },

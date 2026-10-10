@@ -24,7 +24,10 @@ const FRONTEND = path.resolve(__dirname, '..', '..');
 const OUT = path.join(FRONTEND, 'test-results', 'e2e-stack.json');
 
 function backendDir() {
-  return path.resolve(process.env.SIRU_BACKEND_DIR || path.join(FRONTEND, '..', 'voice_to_voice-medical-flow'));
+  if (process.env.SIRU_BACKEND_DIR) return path.resolve(process.env.SIRU_BACKEND_DIR);
+  // The backend checkout beside this one (its current name first, then the older one).
+  const beside = ['Siru-Ai-Backend', 'voice_to_voice-medical-flow'].map(name => path.join(FRONTEND, '..', name));
+  return beside.find(dir => fs.existsSync(dir)) || beside[0];
 }
 
 function python(backend) {
@@ -107,8 +110,11 @@ module.exports = async function globalSetup() {
     CORS_ALLOW_ORIGINS: JSON.stringify([web]),
   };
   const logs = fs.openSync(path.join(path.dirname(OUT), 'e2e-api.log'), 'w');
-  const apiProcess = spawn(py, ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(apiPort)],
-    { cwd: backend, env, stdio: ['ignore', logs, logs] });
+  // The backend's own development launcher (scripts/dev_start.py): it marks the launch as a local development
+  // one, which the API requires before it accepts ENVIRONMENT=dev (CFG-01) - plain uvicorn is refused.
+  // --loopback-db points the app database at this machine without changing the backend's .env.
+  const apiProcess = spawn(py, ['scripts/dev_start.py', '--only', 'api', '--loopback-db', '--host', '127.0.0.1',
+    '--port', String(apiPort)], { cwd: backend, env, stdio: ['ignore', logs, logs] });
   const webProcess = spawn(py, ['dev/serve.py', '--bind', '127.0.0.1', '--port', String(webPort)],
     { cwd: FRONTEND, stdio: 'ignore' });
   const stop = async () => { apiProcess.kill(); webProcess.kill(); };
