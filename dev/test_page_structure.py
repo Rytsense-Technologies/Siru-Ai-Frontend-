@@ -266,11 +266,17 @@ class PageStructureTest(unittest.TestCase):
         self.assertIn("if (file.size > PHOTO_MAX_BYTES)", shopping)
         self.assertIn("rxEl.remove.onclick = () => { photoClear();", shopping)
         api = (FRONTEND / "pharmacy-api.js").read_text(encoding="utf-8")
-        self.assertIn("input:{type:'upload', image_b64:imageB64, mime_type:mimeType}", api)
+        # The photo and the text typed with it ("order these from Apollo") are ONE upload turn: the
+        # text rides in the same input, and that input is what the turn sends.
+        self.assertIn("const input = {type:'upload', image_b64:imageB64, mime_type:mimeType};", api)
+        self.assertIn("if (text) input.text = text;", api)
+        self.assertRegex(api, r"async photo\([^)]*text = ''\)[\s\S]*?concierge\.turn\(\{[^}]*\binput, history:\[\]")
         self.assertNotIn("/v1/concierge/prescriptions/extract", shopping)
+        self.assertRegex(shopping, r"pharmacyApi\.photo\(image, file\.type, step => \{[\s\S]*?\}, text\);")
         app = (FRONTEND / "app.js").read_text(encoding="utf-8")
         self.assertIn("const photo = photoPending?.file || null;", app)
-        self.assertIn("await shoppingSendPhoto(photo);", app)
+        # Sent with the photo, the text is not sent again as a turn of its own.
+        self.assertRegex(app, r"await shoppingSendPhoto\(photo, userInput\);\s*return;")
 
     def test_a_confirm_is_a_traced_turn_and_its_outcome_survives_a_reload(self):
         """Confirm / Cancel on a prepared action go as a "tap" turn, so the
