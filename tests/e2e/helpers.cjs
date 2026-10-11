@@ -35,6 +35,36 @@ async function signIn(page, account) {
   await expect(page.locator('#askInput')).toBeEnabled();
 }
 
+// The delivery location a scenario needs before it shops (an add asks for one, as a real user is asked): set
+// through the app's own location dialog, with the browser's geolocation granted at a fixed place. E2E_LAT /
+// E2E_LNG: where the stack's pharmacies are (default: near the local sandbox's seeded Chennai pharmacies).
+function place() {
+  return { latitude: Number(process.env.E2E_LAT || 12.9791), longitude: Number(process.env.E2E_LNG || 80.2209),
+    accuracy: 20 };
+}
+
+async function setLocation(page) {
+  const { web } = env();
+  await page.context().grantPermissions(['geolocation'], { origin: web });
+  await page.context().setGeolocation(place());
+  await page.click('#locationChangeBtn');
+  await page.click('#locationUseDeviceBtn');
+  await expect(page.locator('#locationRowTitle')).not.toHaveText('No location set', { timeout: 15_000 });
+  for (let i = 0; i < 5 && await page.$('dialog[open]'); i++) {
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+  }
+  await expect(page.locator('dialog[open]')).toHaveCount(0);
+}
+
+// "sandbox": the stack's catalog, stores and orders are its own local sandbox (a typed order is placed at once);
+// otherwise the client's data is read only and an order is prepared for a Confirm tap (actions/service.py).
+async function stackMode() {
+  const response = await fetch(`${env().api}/readyz`);
+  const body = await response.json().catch(() => ({}));
+  return body?.checks?.client_db === 'not_used' ? 'sandbox' : 'readonly';
+}
+
 async function token(page) {
   return page.evaluate(() => authToken());
 }
@@ -84,4 +114,5 @@ async function meId(page) {
   return me.body.user_id || me.body.id;
 }
 
-module.exports = { env, open, signIn, token, api, login, say, meId, SCRIPTS, expect };
+module.exports = { env, open, signIn, setLocation, place, stackMode, token, api, login, say, meId,
+  SCRIPTS, expect };

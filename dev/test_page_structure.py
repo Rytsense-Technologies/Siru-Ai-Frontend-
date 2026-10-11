@@ -293,5 +293,74 @@ class PageStructureTest(unittest.TestCase):
         self.assertEqual(shopping.count("confirmCardSettle(card.actionId, status.textContent);"), 3)
         self.assertIn("if (card.settled) {  // decided earlier in this chat: its outcome, no buttons", shopping)
 
+    def test_a_turn_with_a_failed_step_is_not_called_completed(self):
+        """A step the server reported failed (the model unreachable, a tool error) is not a completed turn: the
+        activity title says "Finished with problems", live and restored, and the inspector's direct tool row shows
+        its failed status - it showed no badge, and the turn read "Completed" (10 Oct)."""
+        shopping = (FRONTEND / "shopping.js").read_text(encoding="utf-8")
+        self.assertIn("failed ? 'Stopped' : problems ? 'Finished with problems' : 'Completed';", shopping)
+        self.assertIn("record.status === 'failed' ? 'Stopped' : problems ? 'Finished with problems' : 'Completed';",
+                      shopping)
+        self.assertNotIn(".textContent = failed ? 'Stopped' : 'Completed';", shopping)
+        self.assertRegex(shopping, r"inspectorRow\('DIRECT', \{[\s\S]{0,200}?failed \? 'error'[\s\S]{0,200}?"
+                                   r"failed \? statusBadge\(step\.status\) : null")
+
+    def test_a_step_whose_change_did_not_happen_is_never_a_success(self):
+        """The server reports "not_done" (a refused add, a stale confirmation, a save not read back) and
+        "partial" (some added, some not) - each shown as such, counted a problem in the turn's title and the
+        inspector entry, styled as a warning; never mapped to "success" (10 Oct)."""
+        shopping = (FRONTEND / "shopping.js").read_text(encoding="utf-8")
+        self.assertIn("not_done: 'not done', partial: 'partial'};", shopping)          # chat activity state
+        self.assertIn("not_done: 'not done', partial: 'partly done'};", shopping)      # inspector badge label
+        self.assertIn("/state-(failed|timeout|stopped|not-done|partial)/.test(r.className)", shopping)
+        self.assertIn("/failed|timeout|stopped|not-done|partial/.test(a.state)", shopping)
+        self.assertIn("['error', 'timeout', 'not_done', 'partial'].includes(step.status)", shopping)
+        self.assertIn("['not done', 'partly done'].includes(label) ? 'warn'", shopping)
+        css = (FRONTEND / "dashboard.css").read_text(encoding="utf-8")
+        self.assertIn(".state-not-done .activity-mark::before, .state-partial .activity-mark::before", css)
+        self.assertIn(".trace-status.status-warn {", css)
+
+    def test_the_cart_steppers_change_that_line_by_its_id(self):
+        """−, + and Remove change THIS line through PUT /cart/items/{id} (the server re-reads stock and price
+        when it goes up) - not a typed command by name, which changed the first of two same-named lines."""
+        shopping = (FRONTEND / "shopping.js").read_text(encoding="utf-8")
+        self.assertIn("button.onclick = () => shoppingCartSetQty(item.id, Number(item.qty) + delta);", shopping)
+        self.assertIn("remove.onclick = () => shoppingCartSetQty(item.id, 0);", shopping)
+        self.assertRegex(shopping, r"/v1/pharmacy/cart/\$\{user\}/items/\$\{encodeURIComponent\(String\(itemId\)\)\}`")
+        self.assertNotIn("shoppingSubmit(`Remove ${name}`)", shopping)
+        self.assertNotIn("`Add one more ${name} to my cart`", shopping)
+
+    def test_the_shop_pages_pharmacy_pick_reaches_the_server(self):
+        """The pharmacy picked on the shop page is posted (this chat's session, the user's location) before its
+        shelf is shown, and its shelf is read afresh; a refused pick is said and nothing is selected."""
+        flow = (FRONTEND / "shop-flow.js").read_text(encoding="utf-8")
+        self.assertIn("async function shopFlowSelect(store) {", flow)
+        self.assertRegex(flow, r"apiFetch\(`/v1/pharmacy/selection/\$\{user\}`, \{\s*method: 'POST'")
+        # The chat's own session (created now if need be) - never a stand-in the chat's turns don't use.
+        self.assertIn("session_id: shoppingEnsureSession(),", flow)
+        self.assertNotIn("'shop')", flow)
+        self.assertIn("shopFlow.shelfCache.delete(store.id);", flow)
+        self.assertRegex(flow, r"catch \(error\) \{[\s\S]{0,200}?shoppingNotice\(`Couldn't select[\s\S]{0,80}?return;")
+
+    def test_a_repriced_cart_never_keeps_the_old_total(self):
+        """The cached bill is keyed by each line's price too, and a line's price never comes from another
+        pharmacy's shelf."""
+        shopping = (FRONTEND / "shopping.js").read_text(encoding="utf-8")
+        self.assertIn("`${item.id}:${item.qty}:${item.price_paise ?? ''}`", shopping)
+        api = (FRONTEND / "pharmacy-api.js").read_text(encoding="utf-8")
+        # main's rule: a line's price only from its exact listing (the name may lend a picture, never a price).
+        self.assertIn("const price = item.unit_price_paise ?? exact?.price_paise ?? null;", api)
+        self.assertNotIn("?? product?.price_paise", api)
+
+    def test_every_asset_has_one_version_and_it_was_bumped(self):
+        """One version for every stylesheet and script, so a deployed browser loads the new shopping.js."""
+        import re
+
+        page = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        versions = set(re.findall(r'\.(?:js|css)\?v=(\d+)"', page))
+        self.assertEqual(versions, {"73"})   # one past production's v=72 - never a downgrade
+        self.assertIn('<script src="shopping.js?v=73"></script>', page)
+        self.assertIn('<script src="version.js?v=73"></script>', page)
+
 if __name__ == "__main__":
     unittest.main()

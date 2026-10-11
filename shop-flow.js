@@ -186,7 +186,26 @@ async function shopFlowPharmacies({fresh = false} = {}) {
   shopFlowCartSummary();
 }
 
-function shopFlowSelect(store) {
+// The pharmacy picked here is the server's choice too (offers.select_store, for this chat's conversation): a
+// chat add, the cart's pharmacy check and checkout then use the same pharmacy - it stayed in this page before
+// (10 Oct). Its shelf is read afresh: stock and prices shown are its own, now.
+async function shopFlowSelect(store) {
+  const user = encodeURIComponent(getUserId());
+  const place = siruLocation.place;
+  try {
+    await apiFetch(`/v1/pharmacy/selection/${user}`, {
+      method: 'POST',
+      // The chat's own session, created now if the user hasn't said anything yet - the same one the chat's next
+      // turn uses (a 'shop' stand-in was another conversation: the chat then asked which pharmacy again).
+      body: JSON.stringify({store_id: String(store.id), session_id: shoppingEnsureSession(),
+        ...(Number.isFinite(place?.lat) && Number.isFinite(place?.lng) ? {lat: place.lat, lng: place.lng} : {})}),
+    });
+  } catch (error) {
+    // Not open, or not reachable: not chosen anywhere - said, and the list stays.
+    shoppingNotice(`Couldn't select ${store.name || 'that pharmacy'}. ${pharmacyError(error)}`);
+    return;
+  }
+  shopFlow.shelfCache.delete(store.id);
   shopFlow.pharmacy = store;
   shopFlow.query = '';
   shopFlow.confirmSwitch = null;
