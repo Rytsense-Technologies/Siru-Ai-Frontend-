@@ -50,6 +50,10 @@ test.beforeEach(async ({ page }) => {
       return json([{id: 'dolo-650', name: A_PRODUCT, unit: '15 tablets', pricePaise: 3000, storeId: 'store-a',
         storeName: A_PHARMACY, inStock: true, prescriptionRequired: false}]);
     }
+    // The shop page's pharmacy pick, recorded by the server (shop-flow.js shopFlowSelect) before the shelf shows.
+    if (/^\/v1\/pharmacy\/selection\/[^/]+$/.test(p) && method === 'POST') {
+      return json({selected: {storeId: 'store-a', storeName: A_PHARMACY}});
+    }
     if (/^\/v1\/pharmacy\/cart\/[^/]+\/items$/.test(p) && method === 'POST') {
       const answer = await hold('cart-add');  // A's add: answered when the test says, as it says
       return json(answer.body, answer.status);

@@ -273,9 +273,11 @@ function activityLabel(step) {
 }
 
 // running, success, failed, timeout - as the step said; never assumed.
+// not_done / partial: the step ran, but the change it was for didn't happen (or only some of it) - 10 Oct.
 const ACTIVITY_STATES = {running: 'running', done: 'success', error: 'failed', failed: 'failed', timeout: 'timeout',
-  fallback: 'fell back', skipped: 'skipped', unavailable: 'unavailable'};
+  fallback: 'fell back', skipped: 'skipped', unavailable: 'unavailable', not_done: 'not done', partial: 'partial'};
 const ACTIVITY_WORDS = {running: 'running', success: 'done', failed: 'failed', timeout: 'timed out',
+  'not done': 'not done', partial: 'partly done',
   'fell back': 'fell back', skipped: 'skipped', unavailable: 'unavailable', stopped: 'stopped', unfinished: 'not finished'};
 
 function activityState(step) {
@@ -349,11 +351,12 @@ function turnActivityFinish(turn, {failed = false, steps = null} = {}) {
     row.replaceWith(turnActivityRow(row.querySelector('.activity-label').textContent, failed ? 'stopped' : 'unfinished'));
   }
   const final = [...box.querySelectorAll('.activity-step')];
-  const problems = final.filter(r => /state-(failed|timeout|stopped)/.test(r.className)).length;
+  const problems = final.filter(r => /state-(failed|timeout|stopped|not-done|partial)/.test(r.className)).length;
   box.classList.remove('turn-pending');
   box.classList.add('done', problems || failed ? 'has-problems' : 'all-ok');
   box.open = false;
-  box.querySelector('.activity-title').textContent = failed ? 'Stopped' : 'Completed';
+  // A step that failed is not a completed turn: "Completed" was shown when the model never answered (10 Oct).
+  box.querySelector('.activity-title').textContent = failed ? 'Stopped' : problems ? 'Finished with problems' : 'Completed';
   box.querySelector('.activity-counter').textContent = [`${final.length} step${final.length === 1 ? '' : 's'}`,
     problems ? `${problems} with a problem` : ''].filter(Boolean).join(' · ');
   turn.record.activity = final.map(r => ({label: r.querySelector('.activity-label').textContent,
@@ -364,9 +367,10 @@ function turnActivityFinish(turn, {failed = false, steps = null} = {}) {
 function turnActivityRestore(record) {
   const box = turnActivityNode();
   box.classList.remove('turn-pending');
-  box.classList.add('done', record.activity.some(a => /failed|timeout|stopped/.test(a.state)) ? 'has-problems' : 'all-ok');
+  const problems = record.activity.some(a => /failed|timeout|stopped|not-done|partial/.test(a.state));
+  box.classList.add('done', problems ? 'has-problems' : 'all-ok');
   for (const {label, state} of record.activity) box.querySelector('.activity-steps').append(turnActivityRow(label, state.replace(/-/g, ' ')));
-  box.querySelector('.activity-title').textContent = record.status === 'failed' ? 'Stopped' : 'Completed';
+  box.querySelector('.activity-title').textContent = record.status === 'failed' ? 'Stopped' : problems ? 'Finished with problems' : 'Completed';
   box.querySelector('.activity-counter').textContent = `${record.activity.length} step${record.activity.length === 1 ? '' : 's'}`;
   return box;
 }
@@ -628,33 +632,50 @@ function shoppingCartRow(item) {
   const qty = el_('span', 'cart-qty');
   qty.setAttribute('role', 'group');
   qty.setAttribute('aria-label', `Quantity of ${name}`);
-  // − / +: the same commands a user would type, so the server's cart (and
-  // its checks) decide - one less of it, or one more of it from this pharmacy.
-  const step = (symbol, delta, label, command) => {
+  // − / + / Remove: this very line, by its item id (the server re-reads stock and price when it goes up).
+  // They were typed commands by NAME: two lines of one name changed the first, and "+" searched the
+  // catalog again and could add another listing (10 Oct).
+  const step = (symbol, delta, label) => {
     const button = el_('button', 'qty-btn', symbol);
     button.type = 'button';
     button.dataset.id = String(item.id ?? '');
     button.dataset.step = String(delta);
     button.setAttribute('aria-label', `${label} ${name}`);
-    button.onclick = () => shoppingSubmit(command);
+    button.onclick = () => shoppingCartSetQty(item.id, Number(item.qty) + delta);
     return button;
   };
-  qty.append(step('−', -1, 'One less', `Remove one ${name}`), el_('span', 'qty-value', String(item.qty)),
-    step('+', 1, 'One more', `Add one more ${name} to my cart`));
+  qty.append(step('−', -1, 'One less'), el_('span', 'qty-value', String(item.qty)), step('+', 1, 'One more'));
   const remove = el_('button', 'remove-product link-btn', 'Remove');
   remove.type = 'button';
   remove.dataset.id = String(item.id ?? '');
   remove.setAttribute('aria-label', `Remove ${name}`);
-  remove.onclick = () => shoppingSubmit(`Remove ${name}`);
+  remove.onclick = () => shoppingCartSetQty(item.id, 0);
   side.append(el_('strong', '', money(item.line_total_paise)), qty, remove);
   row.append(safeImage(item.image_url, { width: 36, height: 36 }), info, side);
   return row;
 }
 
+// One cart line's quantity, exactly, by its item id (0 removes it) - then the cart as the server keeps it.
+// A refusal (out of stock now, a closed pharmacy) is said, and nothing changes.
+async function shoppingCartSetQty(itemId, qty) {
+  if (shop.busy || itemId == null) return;
+  const user = encodeURIComponent(getUserId());
+  try {
+    await apiFetch(`/v1/pharmacy/cart/${user}/items/${encodeURIComponent(String(itemId))}`, {
+      method: 'PUT', body: JSON.stringify({qty: Math.max(0, Math.min(99, qty))}),
+    });
+  } catch (error) {
+    shoppingNotice(`Couldn't update your cart. ${pharmacyError(error)}`);
+  }
+  await shoppingRefresh();
+}
+
 // ---------- a turn's bill or order receipt ----------
 
+// A cart's identity for its cached bill: each line's id, quantity AND price - a line repriced by the server
+// (the steppers, checkout) is another bill; with id:qty only the old total stayed on screen (10 Oct).
 function shoppingCartKey(cart) {
-  return cart.items.map(item => `${item.id}:${item.qty}`).sort().join('|');
+  return cart.items.map(item => `${item.id}:${item.qty}:${item.price_paise ?? ''}`).sort().join('|');
 }
 
 // After a turn is answered: its order receipt, or - when the turn changed the
@@ -1630,12 +1651,13 @@ function inspectorRow(label, {name = '', badges = [], detail = '', time = '', to
 // A step's status as the server reported it: running, success, failed,
 // timeout (or unavailable / skipped for memory). No status: nothing claimed.
 const STATUS_LABELS = {done: 'success', error: 'failed', failed: 'failed', timeout: 'timeout', running: 'running',
-  fallback: 'fell back', unavailable: 'unavailable', skipped: 'skipped'};
+  fallback: 'fell back', unavailable: 'unavailable', skipped: 'skipped', not_done: 'not done', partial: 'partly done'};
 
 function statusBadge(status) {
   if (!status) return null;
   const label = STATUS_LABELS[status] || status;
-  const tone = label === 'failed' ? 'error' : label === 'success' ? 'ok' : label.replace(/\s+/g, '-');
+  const tone = label === 'failed' ? 'error' : label === 'success' ? 'ok'
+    : ['not done', 'partly done'].includes(label) ? 'warn' : label.replace(/\s+/g, '-');
   return el_('span', `trace-status status-${tone}`, label);
 }
 
@@ -1679,8 +1701,11 @@ function activityStep(step, calls = [], checkpoints = [], agents = []) {
       : v;
     const resolved = step.result && typeof step.result === 'object' && Object.keys(step.result).length
       ? `resolved ${Object.entries(step.result).map(([k, v]) => `${k} ${value(v)}`).join(', ')}` : '';
-    return inspectorRow('DIRECT', {name: `direct_tool:${step.name}`, tone: fallback ? 'warn' : 'direct',
-      badges: [el_('span', 'trace-tag', fallback ? 'fell back to the supervisor' : 'no agent · no model')],
+    // Its status too, as the server reported it: a direct tool that failed showed no badge at all (10 Oct).
+    const failed = Boolean(step.status) && !['done', 'running', 'fallback'].includes(step.status);
+    return inspectorRow('DIRECT', {name: `direct_tool:${step.name}`, tone: fallback ? 'warn' : failed ? 'error' : 'direct',
+      badges: [el_('span', 'trace-tag', fallback ? 'fell back to the supervisor' : 'no agent · no model'),
+        failed ? statusBadge(step.status) : null],
       time: activityMs(step.duration_ms), detail: [args, resolved].filter(Boolean).join(' · ')});
   }
   if (step.kind === 'agent') {
@@ -1798,7 +1823,7 @@ function traceFooter(trace) {
 // One turn's entry: what was asked, who answered, every step, what came out.
 function activityEntry({turn_id, user, timestamp, trace, source = 'text', reply = '', card_kinds = []}) {
   const tools = (trace.steps || []).filter(step => step.kind === 'tool');
-  const failed = tools.some(step => ['error', 'timeout'].includes(step.status));
+  const failed = tools.some(step => ['error', 'timeout', 'not_done', 'partial'].includes(step.status));
   const tables = inspectorTables([{trace}]);
   const panel = el_('details', 'agent-activity');
   panel.dataset.turnId = turn_id;
