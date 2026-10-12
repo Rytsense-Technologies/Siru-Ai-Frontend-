@@ -69,7 +69,13 @@ function sessionValid(session) {
   return Boolean(session?.access_token && session?.user?.id && session.expires_at * 1000 > Date.now());
 }
 let authSession = userRead(SESSION_KEY, null, sessionStorage);
-if (!sessionValid(authSession)) authSession = null;
+// A sign-in that ran out while the page was closed: said on the sign-in form (user-menu.js), as a live
+// expiry is (authExpired) - not a silent sign-in page - and the stale record is not kept (12 Oct audit).
+const authExpiredWhileAway = Boolean(authSession?.access_token) && !sessionValid(authSession);
+if (!sessionValid(authSession)) {
+  if (authSession) userForget(SESSION_KEY, sessionStorage);
+  authSession = null;
+}
 let currentUserId = authSession?.user.id || null;
 
 function authToken() { return authSession?.access_token || ''; }

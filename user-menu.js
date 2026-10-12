@@ -220,5 +220,8 @@ loginEl.logoutBtn.onclick = () => signOut();
 
 renderCurrentUser();
 if (getUserId()) authConfirmRole().then(() => { if (getUserId()) applySignedInUser(); });
-else loginEl.loginEmail.focus();
+else {
+  if (authExpiredWhileAway) showLoginError('Your session has expired. Please sign in again.');
+  loginEl.loginEmail.focus();
+}
 loadDemoMerchants();
