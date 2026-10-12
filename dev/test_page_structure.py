@@ -358,9 +358,9 @@ class PageStructureTest(unittest.TestCase):
 
         page = (FRONTEND / "index.html").read_text(encoding="utf-8")
         versions = set(re.findall(r'\.(?:js|css)\?v=(\d+)"', page))
-        self.assertEqual(versions, {"74"})   # one past main's v=73 - never a downgrade
-        self.assertIn('<script src="memory.js?v=74"></script>', page)
-        self.assertIn('<script src="version.js?v=74"></script>', page)
+        self.assertEqual(versions, {"75"})   # one past main's v=74 - never a downgrade
+        self.assertIn('<script src="memory.js?v=75"></script>', page)
+        self.assertIn('<script src="version.js?v=75"></script>', page)
 
     def test_a_refill_schedule_asked_for_in_chat_shows_its_interval_not_an_order(self):
         """A schedule asked for in chat ("refill Telma 40 every month", 12 Oct) has no order, tablets or dose:
@@ -389,6 +389,17 @@ class PageStructureTest(unittest.TestCase):
         # Never a merchant path without the API's version prefix.
         self.assertIsNone(re.search(r"[`'\"]/merchant/", merchant))
         self.assertIn("no_store: 'No store registered for this account.',", merchant)
+
+    def test_a_merchant_without_a_store_is_told_what_to_do(self):
+        """12 Oct, production: "Welcome, <store>" over six "no store" panels - the heading is the account's configured
+        name, the 404 is the client database saying its id owns no store. The page notice says both and the next step,
+        for the overview and for each section view; nothing is estimated."""
+        merchant = (FRONTEND / "merchant.js").read_text(encoding="utf-8")
+        self.assertIn("no_store: 'This sign-in is not linked to a store owner yet - ask your Siru administrator to link "
+                      "it to your store.',", merchant)
+        self.assertEqual(merchant.count("merchantNotice(notConnected ? merchantPageNotice(notConnected.error) : '')"), 1)
+        self.assertEqual(merchant.count("? merchantPageNotice(result.error) : ''"), 1)
+        self.assertNotIn("Nothing on this page is estimated.` : ''", merchant)  # no notice skips the action line
 
 if __name__ == "__main__":
     unittest.main()
