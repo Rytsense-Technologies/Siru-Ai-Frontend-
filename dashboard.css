@@ -574,7 +574,7 @@ html.shop-open, html.shop-open body { overflow: hidden; }
 .m-store-picker select { border: 1px solid var(--line, #e3e5ee); border-radius: 10px; padding: 8px 10px; background: white; font: inherit; font-size: 13px; max-width: 260px; }
 .merchant-notice { margin: 0; padding: 10px 14px; border-radius: 12px; background: #fffaeb; border: 1px solid #fedf89; color: #93370d; font-size: 13px; }
 .merchant-body { display: flex; flex-direction: column; gap: 14px; }
-.m-tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.m-tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
 .m-tile { display: flex; flex-direction: column; gap: 4px; }
 .m-tile-label { font-size: 12px; font-weight: 600; color: var(--ink-soft); }
 .m-tile-value { font-size: 24px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
@@ -586,12 +586,17 @@ html.shop-open, html.shop-open body { overflow: hidden; }
 /* "View all": a comfortable tap target (>= 32px) without changing how it looks. */
 .m-panel .panel-head .link-btn { padding: 8px 10px; margin: -8px -10px; min-height: 32px; }
 .m-panel-body { min-width: 0; }
+.m-empty { display: flex; flex-direction: column; gap: 10px; padding: 28px; max-width: 640px; }
+.m-empty h3 { margin: 0; font-size: 18px; }
+.m-empty p { margin: 0; }
+.m-empty-steps { margin: 4px 0 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; line-height: 1.5; }
 .m-subhead { margin: 12px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-soft); }
 .m-state { margin: 4px 0; font-size: 13px; color: var(--ink-soft); }
 .m-state-error { padding: 10px 12px; border-radius: 10px; background: #fef3f2; color: #b42318; }
 .m-kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 16px; margin: 0; font-size: 14px; }
 .m-kv dt { color: var(--ink-soft); overflow-wrap: anywhere; }
 .m-kv dd { margin: 0; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.m-footnote, .muted.small.m-footnote { margin: 14px 0 0; line-height: 1.5; }
 .m-strike { text-decoration: line-through; color: var(--ink-soft); }
 .m-table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
 .m-table th, .m-table td { padding: 8px 10px; border-top: 1px solid var(--line-soft); text-align: right; }
@@ -604,6 +609,7 @@ html.shop-open, html.shop-open body { overflow: hidden; }
 .m-row-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .m-row-text strong { font-size: 14px; overflow-wrap: anywhere; }
 .m-row-side { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex-shrink: 0; text-align: right; }
+.m-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
 .m-money { font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; }
 .m-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
 .m-badge-neutral { background: #f2f4f7; color: #344054; }
@@ -616,7 +622,16 @@ html.shop-open, html.shop-open body { overflow: hidden; }
 .merchant-assistant { display: flex; flex-direction: column; min-height: calc(100vh - 230px); }
 .merchant-log { flex: 1; max-height: none; min-height: 260px; }
 .merchant-suggestions { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 0; }
-.m-chip { border: 1px solid var(--line-soft); background: #fff; color: var(--ink); border-radius: 999px; padding: 7px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+/* The customer chat's empty state (shopping.js chatEmptyUpdate) - the same chips as the merchant assistant. */
+.chat-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; margin: auto 0; padding: 28px 12px; text-align: center; }
+.chat-empty h3 { margin: 4px 0 0; font-size: 18px; }
+.chat-empty p { margin: 0; max-width: 460px; font-size: 14px; line-height: 1.5; }
+.chat-empty-mark { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; background: var(--accent-soft); color: var(--accent); }
+.chat-suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 6px; }
+/* While it shows, it takes the conversation's space (the log is empty). */
+.chat-card:has(#chatEmpty:not([hidden])) #chatMessages { flex: 0 0 auto; min-height: 0; padding: 0; }
+.chat-card .chat-empty { flex: 1; justify-content: center; }
+.m-chip { min-height: 40px; border: 1px solid var(--line-soft); background: #fff; color: var(--ink); border-radius: 999px; padding: 7px 14px; font: inherit; font-size: 13px; cursor: pointer; }
 .m-chip:hover { border-color: #d6bbfb; background: var(--accent-soft); }
 .m-card { display: flex; flex-direction: column; gap: 6px; width: min(420px, 100%); padding: 12px 14px; border-radius: 12px; background: #fff; border: 1px solid var(--line-soft); border-left: 4px solid #d0d5dd; }
 .m-card-success { border-left-color: #17b26a; }

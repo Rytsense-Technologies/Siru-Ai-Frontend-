@@ -2618,6 +2618,32 @@ function turnRestore(record) {
   for (const receipt of record.receipts || []) turn.el.append(shoppingBillMessage(receipt.snapshot, receipt.timestamp));
 }
 
+// ---------- an empty conversation ----------
+
+// Questions to start with: each one Siru answers from this user's own data or the pharmacies' listings.
+const CHAT_SUGGESTIONS = [
+  'Do you have Dolo 650?', 'Show my last order', 'What do you remember about me?', 'How do I upload a prescription?',
+];
+const chatEmptyEl = {box: document.getElementById('chatEmpty'), list: document.getElementById('chatSuggestions')};
+
+// Shown only while the conversation has nothing in it and someone is signed in.
+function chatEmptyUpdate() {
+  if (!chatEmptyEl.box) return;
+  chatEmptyEl.box.hidden = Boolean(shopEl.chatMessages.childElementCount) || !getUserId();
+}
+
+if (chatEmptyEl.box) {
+  for (const text of CHAT_SUGGESTIONS) {
+    const chip = el_('button', 'm-chip', text);
+    chip.type = 'button';
+    // Sent as the user's own turn, exactly as if typed - nothing is done on the page's own.
+    chip.onclick = () => { if (!shop.busy) shoppingSubmit(text); };
+    chatEmptyEl.list.append(chip);
+  }
+  iconsHydrate(chatEmptyEl.box);
+  new MutationObserver(chatEmptyUpdate).observe(shopEl.chatMessages, {childList: true});
+}
+
 // A message outside any turn (the greeting, a notice) in this session.
 function messageRestore(message) {
   if (typeof message.text !== 'string') return;
@@ -2660,6 +2686,7 @@ async function shoppingResetUser() {
   }
   memoryRefresh();
   shopEl.chatMessages.scrollTop = shopEl.chatMessages.scrollHeight;
+  chatEmptyUpdate();
   shopEl.selectedMedicine.textContent = "Select a product to use “this medicine”.";
   shopEl.cartItems.textContent = getUserId() ? 'Loading cart…' : 'Sign in to see your cart.';
   shopEl.cartStatus.textContent = getUserId() ? 'Loading cart…' : 'Not signed in';
