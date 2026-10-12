@@ -14,7 +14,7 @@ let shoppingSessionId = null;
 const shop = {
   products: [], cart: null, selected: null, quantity: 1, busy: false,
   generation: 0, selectionPromise: Promise.resolve(),
-  selectionError: null, refreshing: false,
+  selectionError: null, refreshing: null, refreshAgain: null,  // the read in flight; the one shared after it
   currentUser: null, lastLoadError: null,
   connecting: false, loadError: null,
   // The cart as of the last finished turn (not the background poll) - a turn
@@ -2575,10 +2575,30 @@ async function shoppingSubmit(text) {
   }
 }
 
-async function shoppingRefresh() {
-  if (shop.refreshing || !getUserId() || isMerchant() || !pharmacyApi.mode) return;
-  const generation = shop.generation;
-  shop.refreshing = true;
+// A refresh asked for while one is in flight is not dropped: the one in flight may have read the
+// cart before the change this one is for (another tab, a voice turn, a Confirm tap - CI, 12 Oct:
+// focus after another tab's change still showed the old count, and an awaited refresh returned
+// before showing anything). Everyone who asks meanwhile shares ONE more read, started when the one in
+// flight ends; what they await is that read, shown.
+function shoppingRefresh() {
+  if (!getUserId() || isMerchant() || !pharmacyApi.mode) return Promise.resolve();
+  if (shop.refreshing) {
+    if (!shop.refreshAgain) {
+      const again = shop.refreshing.then(() => {
+        if (shop.refreshAgain === again) shop.refreshAgain = null;
+        return shoppingRefresh();
+      });
+      shop.refreshAgain = again;
+    }
+    return shop.refreshAgain;
+  }
+  shop.refreshing = shoppingRefreshRead(shop.generation);
+  return shop.refreshing;
+}
+
+// One read of the cart, shown. Never rejects; shop.refreshing is cleared before it settles, so the
+// shared follow-up (above) starts a new read.
+async function shoppingRefreshRead(generation) {
   try {
     const state = await pharmacyApi.state();
     if (generation !== shop.generation) return;
@@ -2598,7 +2618,7 @@ async function shoppingRefresh() {
       }
     }
   } finally {
-    if (generation === shop.generation) shop.refreshing = false;
+    if (generation === shop.generation) shop.refreshing = null;
   }
 }
 
@@ -2616,6 +2636,32 @@ function turnRestore(record) {
   else if (record.status === 'pending') turnNote(turn, 'No reply (the connection ended).');
   for (const card of record.cards || []) turnAppend(turn, shoppingUiCard(card, time));
   for (const receipt of record.receipts || []) turn.el.append(shoppingBillMessage(receipt.snapshot, receipt.timestamp));
+}
+
+// ---------- an empty conversation ----------
+
+// Questions to start with: each one Siru answers from this user's own data or the pharmacies' listings.
+const CHAT_SUGGESTIONS = [
+  'Do you have Dolo 650?', 'Show my last order', 'What do you remember about me?', 'How do I upload a prescription?',
+];
+const chatEmptyEl = {box: document.getElementById('chatEmpty'), list: document.getElementById('chatSuggestions')};
+
+// Shown only while the conversation has nothing in it and someone is signed in.
+function chatEmptyUpdate() {
+  if (!chatEmptyEl.box) return;
+  chatEmptyEl.box.hidden = Boolean(shopEl.chatMessages.childElementCount) || !getUserId();
+}
+
+if (chatEmptyEl.box) {
+  for (const text of CHAT_SUGGESTIONS) {
+    const chip = el_('button', 'm-chip', text);
+    chip.type = 'button';
+    // Sent as the user's own turn, exactly as if typed - nothing is done on the page's own.
+    chip.onclick = () => { if (!shop.busy) shoppingSubmit(text); };
+    chatEmptyEl.list.append(chip);
+  }
+  iconsHydrate(chatEmptyEl.box);
+  new MutationObserver(chatEmptyUpdate).observe(shopEl.chatMessages, {childList: true});
 }
 
 // A message outside any turn (the greeting, a notice) in this session.
@@ -2636,7 +2682,8 @@ async function shoppingResetUser() {
   shop.selected = null;
   shop.quantity = 1;
   shop.busy = false;
-  shop.refreshing = false;
+  shop.refreshing = null;
+  shop.refreshAgain = null;
   shop.turns.clear();
   shop.lastLoadError = null;
   shop.billedKey = null;
@@ -2660,6 +2707,7 @@ async function shoppingResetUser() {
   }
   memoryRefresh();
   shopEl.chatMessages.scrollTop = shopEl.chatMessages.scrollHeight;
+  chatEmptyUpdate();
   shopEl.selectedMedicine.textContent = "Select a product to use “this medicine”.";
   shopEl.cartItems.textContent = getUserId() ? 'Loading cart…' : 'Sign in to see your cart.';
   shopEl.cartStatus.textContent = getUserId() ? 'Loading cart…' : 'Not signed in';

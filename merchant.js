@@ -220,7 +220,7 @@ function mRows(items, {limit = 0, empty}) {
     }
     const [, title] = merchantPick(item, ['name', 'itemName', 'productName', 'title', 'number', 'orderNumber', 'orderNo', 'displayId', 'code', 'id']);
     const [, sub] = merchantPick(item, ['category', 'brand', 'sku', 'at', 'createdAt', 'placedAt', 'expiryDate']);
-    const [metaKey, meta] = merchantPick(item, ['unitsSold', 'units', 'qty', 'quantity', 'stock', 'stockQty', 'available', 'itemCount', 'count']);
+    const [metaKey, meta] = merchantPick(item, ['unitsSold', 'units', 'qty', 'quantity', 'stock', 'stockQty', 'available', 'itemCount', 'count', 'items']);
     const [moneyKey, money] = merchantPick(item, ['totalPaise', 'amountPaise', 'revenuePaise', 'grossPaise', 'pricePaise', 'total', 'amount']);
     const [, status] = merchantPick(item, ['status', 'stockStatus', 'state']);
     const text = mEl('div', 'm-row-text');
@@ -228,8 +228,20 @@ function mRows(items, {limit = 0, empty}) {
     if (sub !== null) text.append(mEl('span', 'muted small', merchantValue('sub', sub)));
     const side = mEl('div', 'm-row-side');
     if (money !== null) side.append(mEl('span', 'm-money', merchantValue(moneyKey, money)));
-    if (meta !== null) side.append(mEl('span', 'muted small', `${merchantLabel(metaKey)}: ${merchantValue(metaKey, meta)}`));
-    if (status !== null) side.append(mBadge(String(status)));
+    if (meta !== null) {
+      // A stock row says the level its alert starts at (lowStockThreshold), when the API sends it.
+      const threshold = typeof item.lowStockThreshold === 'number' && metaKey === 'qty'
+        ? ` (alert at ${merchantCount.format(item.lowStockThreshold)})` : '';
+      side.append(mEl('span', 'muted small', `${merchantLabel(metaKey)}: ${merchantValue(metaKey, meta)}${threshold}`));
+    }
+    const badges = mEl('div', 'm-badges');
+    if (status !== null) badges.append(mBadge(String(status)));
+    // An order not yet paid says so (paid is the normal case and not repeated on every row).
+    if (typeof item.paymentStatus === 'string' && !/^paid$/i.test(item.paymentStatus)) {
+      badges.append(mBadge(`Payment ${merchantLabel(item.paymentStatus).toLowerCase()}`));
+    }
+    if (item.prescriptionRequired === true) badges.append(mEl('span', 'm-badge m-badge-neutral', 'Rx required'));
+    if (badges.childElementCount) side.append(badges);
     li.append(text, side);
     list.append(li);
   }
@@ -260,6 +272,17 @@ async function mFill(panel, section, render, query = '') {
   return result;
 }
 
+// The periods as the API counts them (readonly_services._period_start), said wherever they are shown.
+const MERCHANT_PERIODS = 'Today is from midnight, this week from Monday, this month from the 1st (IST).';
+
+// "2026-10-12" -> "12 Oct 2026"; anything else as given.
+function merchantDay(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value));
+  if (!match) return String(value);
+  const date = new Date(Date.UTC(+match[1], +match[2] - 1, +match[3]));
+  return date.toLocaleDateString('en-IN', {day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC'});
+}
+
 const MERCHANT_EMPTY = {
   orders: 'No orders yet.',
   'top-items': 'No items sold in this period yet.',
@@ -268,16 +291,41 @@ const MERCHANT_EMPTY = {
 // The limits api/routes/merchant.py asks for: a full list may have more.
 const MERCHANT_LIMITS = {orders: 10, 'top-items': 5, 'low-stock': 15};
 
+// A list the API cut at its limit (orders: newest first) says how many there are (meta.total) - never presented as all of them.
+function mPartialList(data, empty, noun, order = '') {
+  const items = merchantList(data);
+  const total = Number(data?.meta?.total);
+  const wrap = mEl('div');
+  if (items.length && Number.isFinite(total) && total > items.length) {
+    wrap.append(mEl('p', 'muted small', `Showing ${order}${items.length} of ${merchantCount.format(total)} ${noun}`));
+  }
+  wrap.append(mRows(items, {empty}));
+  return wrap;
+}
+
 const merchantRender = {
   dashboard: data => {
-    // The store's name is in the page heading (merchantStoreName).
-    const {store, ...figures} = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
-    const rows = merchantScalars(figures);
-    if (store && typeof store.isOpen === 'boolean') rows.unshift({label: 'Store', value: store.isOpen ? 'Open' : 'Closed'});
-    const recent = merchantList(figures);
+    // The store's name is in the page heading (merchantStoreName); its recent orders are the
+    // "Recent orders" panel's. Known fields in plain words, anything else as the server named it.
+    const {store, today, orders, alerts, recentOrders, ...rest} =
+      data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+    const rows = [];
+    if (store && typeof store.isOpen === 'boolean') rows.push({label: 'Store', value: store.isOpen ? 'Open' : 'Closed'});
+    if (today && typeof today === 'object') {
+      for (const [status, count] of Object.entries(today.ordersByStatus || {})) {
+        if (typeof count === 'number') rows.push({label: `Today · ${merchantLabel(status)}`, value: merchantCount.format(count)});
+      }
+      const {revenuePaise, fulfilledOrders, ordersByStatus, date, ...other} = today;
+      rows.push(...merchantScalars(other, 'Today · '));
+    }
+    if (typeof orders?.total === 'number') rows.push({label: 'All orders to date', value: merchantCount.format(orders.total)});
+    for (const alert of Array.isArray(alerts) ? alerts : []) {
+      if (alert && typeof alert.count === 'number') rows.push({label: `Alert · ${merchantLabel(alert.kind || 'other')}`, value: merchantCount.format(alert.count)});
+    }
+    rows.push(...merchantScalars(rest));
     const wrap = mEl('div');
     wrap.append(rows.length ? mKeyValues(rows) : mState('No summary figures for today yet.'));
-    if (recent.length) wrap.append(mEl('h3', 'm-subhead', 'Recent'), mRows(recent, {limit: 5, empty: ''}));
+    if (typeof today?.date === 'string') wrap.append(mEl('p', 'muted small m-footnote', `For ${merchantDay(today.date)} (IST).`));
     return wrap;
   },
   earnings: data => {
@@ -302,14 +350,22 @@ const merchantRender = {
     }
     const wrap = mEl('div');
     wrap.append(table);
-    const rest = merchantScalars(Object.fromEntries(Object.entries(data).filter(([key]) => !periods.some(([p]) => p === key))));
-    if (rest.length) wrap.append(mEl('h3', 'm-subhead', 'Settlements'), mKeyValues(rest));
-    wrap.append(mEl('p', 'muted small', 'Counted from delivered and completed orders.'));
+    const {settlements, ...others} = Object.fromEntries(Object.entries(data).filter(([key]) => !periods.some(([p]) => p === key)));
+    const paid = [];
+    if (typeof settlements?.count === 'number') paid.push({label: 'Settlements paid', value: merchantCount.format(settlements.count)});
+    if (typeof settlements?.settledPaise === 'number') paid.push({label: 'Amount settled', value: merchantValue('settledPaise', settlements.settledPaise)});
+    if (settlements && typeof settlements === 'object') {
+      const {count, settledPaise, ...more} = settlements;
+      paid.push(...merchantScalars(more, 'Settlements · '));
+    }
+    paid.push(...merchantScalars(others));
+    if (paid.length) wrap.append(mEl('h3', 'm-subhead', 'Settlements'), mKeyValues(paid));
+    wrap.append(mEl('p', 'muted small m-footnote', `Counted from delivered and completed orders. ${MERCHANT_PERIODS}`));
     return wrap;
   },
-  orders: data => mRows(merchantList(data), {empty: MERCHANT_EMPTY.orders}),
+  orders: data => mPartialList(data, MERCHANT_EMPTY.orders, 'orders', 'the latest '),
   'top-items': data => mRows(merchantList(data), {empty: MERCHANT_EMPTY['top-items']}),
-  'low-stock': data => mRows(merchantList(data), {empty: MERCHANT_EMPTY['low-stock']}),
+  'low-stock': data => mPartialList(data, MERCHANT_EMPTY['low-stock'], 'items'),
   catalog: data => mTiles([
     {label: 'Items in catalog', value: merchantCount.format(Number(data?.totalItems ?? 0))},
     {label: 'Out of stock', value: merchantCount.format(Number(data?.outOfStockItems ?? 0)),
@@ -343,11 +399,25 @@ async function merchantOverview() {
   const failed = [...results, catalog].filter(r => r?.error);
   const notConnected = failed.find(r => merchantNotConnected(r.error));
   merchantNotice(notConnected ? merchantPageNotice(notConnected.error) : '');
+  // Every read says this sign-in owns no store: one empty state, not five panels saying it again.
+  if (failed.length === results.length + 1 && failed.every(r => r.error?.detail?.code === 'no_store')) {
+    merchantNoStore(tiles, grid);
+    return;
+  }
   if (failed.length === results.length + 1) {
     tiles.replaceChildren();
     return;
   }
   const summary = [];
+  const today = results[0]?.data?.today;
+  if (!results[0]?.error && today && typeof today === 'object') {
+    if (typeof today.revenuePaise === 'number') {
+      summary.push({label: 'Sales today', value: merchantValue('revenuePaise', today.revenuePaise), note: 'Delivered and completed'});
+    }
+    if (typeof today.fulfilledOrders === 'number') {
+      summary.push({label: 'Orders completed today', value: merchantCount.format(today.fulfilledOrders)});
+    }
+  }
   if (!catalog.error) {
     summary.push({label: 'Catalog items', value: merchantCount.format(Number(catalog.data?.totalItems ?? 0))});
     summary.push({label: 'Out of stock', value: merchantCount.format(Number(catalog.data?.outOfStockItems ?? 0)),
@@ -363,6 +433,30 @@ async function merchantOverview() {
       value: capped ? `${alerts}+` : merchantCount.format(alerts)});
   }
   tiles.replaceChildren(summary.length ? mTiles(summary) : mEl('span'));
+}
+
+// The API's 404 no_store for every read: this sign-in's user id owns no store in the client database.
+// The heading and sidebar stop naming the account as if a store had been found; what to do is said once,
+// and the page's own Refresh reads again.
+function merchantNoStore(tiles, grid) {
+  merchant.storeName = null;
+  merchantEl.merchantName.textContent = 'No store linked';
+  merchantEl.merchantIdLine.textContent = merchant.user?.email || merchant.user?.name || '';
+  merchantEl.merchantTitle.textContent = 'No store linked to this sign-in';
+  merchantEl.merchantSub.textContent = 'Signed in, but the client database has no store owned by this account.';
+  tiles.replaceChildren();
+  const card = mEl('section', 'card m-empty');
+  card.setAttribute('aria-labelledby', 'merchantNoStoreTitle');
+  const title = mEl('h3', '', 'Your dashboard will appear here once your store is linked');
+  title.id = 'merchantNoStoreTitle';
+  const steps = mEl('ol', 'm-empty-steps');
+  steps.append(
+    mEl('li', '', `Ask your Siru administrator to link ${merchant.user?.email || 'this sign-in'} to your store.`),
+    mEl('li', '', 'Once it is linked, press Refresh at the top - sales, orders, stock and catalog load from your store\'s own records.'),
+  );
+  card.append(title, mEl('p', 'muted', 'No figures are shown or estimated until then.'), steps);
+  grid.replaceWith(card);
+  merchantNotice('');  // the card says it - the section views keep the one-line notice
 }
 
 function merchantOpenLink(section) {
@@ -416,7 +510,8 @@ function merchantStoreName(name) {
   if (typeof name !== 'string' || !name.trim() || !merchant.user) return;
   merchant.storeName = name.trim();
   merchantEl.merchantName.textContent = merchant.storeName;
-  merchantEl.merchantIdLine.textContent = merchant.user.name;
+  merchantEl.merchantIdLine.textContent = merchant.user.name && merchant.user.name !== merchant.storeName
+    ? merchant.user.name : merchant.user.email || '';
   if (merchant.view === 'overview') merchantEl.merchantTitle.textContent = merchant.storeName;
 }
 
