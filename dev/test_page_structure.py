@@ -358,9 +358,18 @@ class PageStructureTest(unittest.TestCase):
 
         page = (FRONTEND / "index.html").read_text(encoding="utf-8")
         versions = set(re.findall(r'\.(?:js|css)\?v=(\d+)"', page))
-        self.assertEqual(versions, {"73"})   # one past production's v=72 - never a downgrade
-        self.assertIn('<script src="shopping.js?v=73"></script>', page)
-        self.assertIn('<script src="version.js?v=73"></script>', page)
+        self.assertEqual(versions, {"74"})   # one past main's v=73 - never a downgrade
+        self.assertIn('<script src="memory.js?v=74"></script>', page)
+        self.assertIn('<script src="version.js?v=74"></script>', page)
+
+    def test_a_refill_schedule_asked_for_in_chat_shows_its_interval_not_an_order(self):
+        """A schedule asked for in chat ("refill Telma 40 every month", 12 Oct) has no order, tablets or dose:
+        its interval and next refill are shown - never "order null" / "runs out around null"."""
+        memory = (FRONTEND / "memory.js").read_text(encoding="utf-8")
+        self.assertIn("if (schedule.interval) {", memory)
+        self.assertIn("every === 1 ? `Every ${unit}` : `Every ${every} ${unit}s`", memory)
+        self.assertIn("row.append(el_('p', 'muted small', `Next refill: ${est.next_refill_date}.`));", memory)
+        self.assertLess(memory.index("if (schedule.interval) {"), memory.index("order ${schedule.order_id}"))
 
 if __name__ == "__main__":
     unittest.main()
