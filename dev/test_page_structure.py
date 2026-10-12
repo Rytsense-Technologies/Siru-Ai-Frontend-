@@ -371,5 +371,24 @@ class PageStructureTest(unittest.TestCase):
         self.assertIn("row.append(el_('p', 'muted small', `Next refill: ${est.next_refill_date}.`));", memory)
         self.assertLess(memory.index("if (schedule.interval) {"), memory.index("order ${schedule.order_id}"))
 
+    def test_the_merchant_dashboard_requests_the_backends_own_routes(self):
+        """The six sections are read from GET /v1/merchant/{section} - the backend's routes (api/routes/merchant.py)
+        on the configured API origin, with the signed-in token (apiFetch). A 404 there with {"code": "no_store"} is
+        the client database saying this account's id owns no store (12 Oct: every section 404 for a merchant whose
+        configured id owns no store) - said on the page, never a wrong URL."""
+        import re
+
+        merchant = (FRONTEND / "merchant.js").read_text(encoding="utf-8")
+        self.assertIn("apiFetch(`/v1/merchant/${section}${query}`)", merchant)
+        self.assertIn("apiFetch('/v1/merchant/me/stores')", merchant)
+        # The views' sections, the overview's panels (['Today', 'dashboard'], ...) and the catalog's own read.
+        sections = (set(re.findall(r"section: '([a-z-]+)'", merchant))
+                    | set(re.findall(r"\['[A-Z][^']*', '([a-z-]+)'\]", merchant))
+                    | set(re.findall(r"merchantFetch\('([a-z-]+)'", merchant)))
+        self.assertEqual(sections, {"dashboard", "earnings", "orders", "top-items", "low-stock", "catalog"})
+        # Never a merchant path without the API's version prefix.
+        self.assertIsNone(re.search(r"[`'\"]/merchant/", merchant))
+        self.assertIn("no_store: 'No store registered for this account.',", merchant)
+
 if __name__ == "__main__":
     unittest.main()
