@@ -670,21 +670,20 @@ html.shop-open, html.shop-open body { overflow: hidden; }
   .topbar .chip-extra { display: none; }
   .topbar .user-menu .user-text { display: none; }
 }
-/* Phones: brand, bell and profile on the first line; the four chips on a
-   second, full-width line that scrolls sideways inside itself (never the page). */
+/* Phones: brand, bell and profile on the first line; under them the location on a full-width line of its own,
+   then Nearby, Cart and Orders sharing the next line - every chip whole and on screen. (They used to be one line
+   scrolling sideways with its scrollbar hidden: "Orders" was cut off at the edge with no sign there was more.) */
 @media (max-width: 760px) {
   .topbar-inner { flex-wrap: wrap; row-gap: 8px; }
   .topbar-inner h1 { width: auto; flex: 1 1 auto; min-width: 0; }
   .topbar-actions { display: contents; }
-  .topbar .context-row { order: 5; flex: 1 1 100%; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
-  .topbar .context-row::-webkit-scrollbar { display: none; }
-  .topbar .location-row-text strong { max-width: 130px; }
-  .topbar .location-chip { flex-shrink: 0; }
-  .topbar .context-chip { padding: 4px 9px; gap: 5px; }
-}
-/* Small phones: the action chips drop their icons so all four usually fit. */
-@media (max-width: 420px) {
-  .topbar .context-action > .icon { display: none; }
+  .topbar .context-row { order: 5; flex: 1 1 100%; flex-wrap: wrap; gap: 6px; }
+  .topbar .location-chip { flex: 1 1 100%; }
+  /* Its own line: room for where it delivers again (hidden on narrower desktops), cut with "..." if long. */
+  .topbar .location-row-text { flex: 1 1 auto; }
+  .topbar .location-row-text strong { max-width: none; flex-shrink: 0; }
+  .topbar .location-row-text .muted { display: inline; max-width: none; min-width: 0; }
+  .topbar .context-action { flex: 1 1 0; justify-content: center; min-height: 36px; padding: 4px 8px; gap: 5px; }
 }
 /* Phones: the cart's quantity steppers and Remove are touch targets of at least 32px. */
 @media (max-width: 860px) {
@@ -815,3 +814,18 @@ html.shop-open, html.shop-open body { overflow: hidden; }
 .inspector .agent-activity > summary > * { min-width: 0; }
 /* The chat header's buttons and status wrap on the narrowest phones instead of spilling out. */
 .chat-heading-side { flex-wrap: wrap; flex-shrink: 1; min-width: 0; }
+/* Phones: the status beside the title, the three buttons sharing the next line as 32px tap targets. The
+   buttons and status used to wrap over two more lines (117px at 375px, "Ready" or "Memory" alone on the
+   third) with 26px buttons. */
+@media (max-width: 760px) {
+  .chat-heading { flex-wrap: wrap; row-gap: 8px; }
+  .chat-heading > div:first-child { order: 0; flex: 1 1 auto; min-width: 0; }
+  .chat-heading-side { display: contents; }
+  .chat-heading .chat-status { order: 1; }
+  .chat-heading::after { content: ''; order: 2; flex-basis: 100%; }
+  .chat-heading .activity-btn { order: 3; flex: 1 1 auto; justify-content: center; min-height: 32px; min-width: 0; }
+}
+/* Narrow phones: the three buttons keep their words and counts on that one line; their icons go. */
+@media (max-width: 420px) {
+  .chat-heading .activity-btn > .icon { display: none; }
+}

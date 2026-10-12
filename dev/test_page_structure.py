@@ -358,9 +358,9 @@ class PageStructureTest(unittest.TestCase):
 
         page = (FRONTEND / "index.html").read_text(encoding="utf-8")
         versions = set(re.findall(r'\.(?:js|css)\?v=(\d+)"', page))
-        self.assertEqual(versions, {"76"})   # one past main's v=75 - never a downgrade
-        self.assertIn('<script src="memory.js?v=76"></script>', page)
-        self.assertIn('<script src="version.js?v=76"></script>', page)
+        self.assertEqual(versions, {"77"})   # one past main's v=76 - never a downgrade
+        self.assertIn('<script src="memory.js?v=77"></script>', page)
+        self.assertIn('<script src="version.js?v=77"></script>', page)
 
     def test_a_refill_schedule_asked_for_in_chat_shows_its_interval_not_an_order(self):
         """A schedule asked for in chat ("refill Telma 40 every month", 12 Oct) has no order, tablets or dose:

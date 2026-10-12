@@ -236,8 +236,10 @@ function mRows(items, {limit = 0, empty}) {
     }
     const badges = mEl('div', 'm-badges');
     if (status !== null) badges.append(mBadge(String(status)));
-    // An order not yet paid says so (paid is the normal case and not repeated on every row).
-    if (typeof item.paymentStatus === 'string' && !/^paid$/i.test(item.paymentStatus)) {
+    // A live order not yet paid says so (paid is the normal case and not repeated on every row). A cancelled
+    // or failed order has nothing to pay: "Payment pending" beside "Cancelled" read as money still owed.
+    const closed = typeof status === 'string' && /cancel|reject|fail|expired/i.test(status);
+    if (typeof item.paymentStatus === 'string' && !/^paid$/i.test(item.paymentStatus) && !closed) {
       badges.append(mBadge(`Payment ${merchantLabel(item.paymentStatus).toLowerCase()}`));
     }
     if (item.prescriptionRequired === true) badges.append(mEl('span', 'm-badge m-badge-neutral', 'Rx required'));

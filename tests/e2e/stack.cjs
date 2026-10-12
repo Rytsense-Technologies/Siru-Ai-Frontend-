@@ -117,7 +117,18 @@ module.exports = async function globalSetup() {
     '--port', String(apiPort)], { cwd: backend, env, stdio: ['ignore', logs, logs] });
   const webProcess = spawn(py, ['dev/serve.py', '--bind', '127.0.0.1', '--port', String(webPort)],
     { cwd: FRONTEND, stdio: 'ignore' });
-  const stop = async () => { apiProcess.kill(); webProcess.kill(); };
+  // The whole process tree: dev_start.py runs the API as its own child (uvicorn), and on Windows kill() ends only
+  // the launcher - the API was left listening on the port with this run's accounts, and the next run's sign-in
+  // failed against it (12 Oct). taskkill /T ends the tree; elsewhere a signal reaches the launcher, which stops it.
+  const end = child => {
+    if (child.exitCode !== null) return;
+    if (process.platform === 'win32') {
+      try { execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' }); } catch { /* already gone */ }
+    } else {
+      child.kill();
+    }
+  };
+  const stop = async () => { end(apiProcess); end(webProcess); };
   try {
     await waitFor(`${api}/healthz`, 90);
     await waitFor(`${web}/index.html`, 30);
