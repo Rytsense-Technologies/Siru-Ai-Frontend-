@@ -702,10 +702,11 @@ async function addrRefresh(userId = getUserId()) {
 
 // ---------- refill schedules (GET/POST/PATCH/DELETE /v1/refill-schedules/me) ----------
 //
-// Set up by the user from one of their confirmed orders. The estimate comes
-// only from the tablets dispensed and the daily dose the user confirms from
-// the prescription - shown as unavailable until both are known. A reminder,
-// never an order.
+// Set up from one of the user's confirmed orders - the estimate only from the
+// tablets dispensed and the daily dose confirmed from the prescription, shown
+// as unavailable until both are known - or asked for in chat at the user's own
+// interval ("refill Telma 40 every month": `interval`, the next refill date).
+// A reminder, never an order.
 let schedShownFor = null;
 
 function schedReset() {
@@ -733,6 +734,16 @@ function schedItem(schedule) {
   row.append(head);
   const meta = el_('div', 'memory-meta');
   meta.append(el_('span', 'memory-tag long', 'Long-term'));
+  if (schedule.interval) {
+    // Asked for in chat: no order, tablets or dose behind it - the interval the user gave and the next refill.
+    const {every, unit} = schedule.interval;
+    meta.append(el_('span', '', 'Asked for in chat'));
+    meta.append(el_('span', '', every === 1 ? `Every ${unit}` : `Every ${every} ${unit}s`));
+    row.append(meta);
+    row.append(el_('p', 'muted small', `Next refill: ${est.next_refill_date}.`));
+    schedReminderLine(row, schedule.reminder || {});
+    return row;
+  }
   meta.append(el_('span', '', schedule.source === 'auto_from_order' ? 'Created automatically from your order' : 'Set up by you'));
   meta.append(el_('span', '', `Dispensed ${schedule.dispensed_date || '?'} · order ${schedule.order_id}`));
   const units = {user_confirmed: 'you confirmed', catalog_pack_size: 'pack size × quantity'}[schedule.units_source];
@@ -750,7 +761,11 @@ function schedItem(schedule) {
     : `Estimate unavailable - ${est.reason}.`;
   row.append(el_('p', `muted small${est.status === 'ok' ? '' : ' household-status'}`, line));
   for (const note of est.notes || []) row.append(el_('p', 'small household-status', note));
-  const reminder = schedule.reminder || {};
+  schedReminderLine(row, schedule.reminder || {});
+  return row;
+}
+
+function schedReminderLine(row, reminder) {
   const reminderText = {
     scheduled: `Reminder scheduled - shown in chat from ${reminder.due_from}.`,
     due: `Reminder due - shown in chat when you next open Siru.`,
@@ -759,7 +774,6 @@ function schedItem(schedule) {
     unavailable: `No reminder - ${reminder.reason || 'not enough information'}.`,
   }[reminder.state];
   if (reminderText) row.append(el_('p', 'muted small sched-reminder', reminderText));
-  return row;
 }
 
 async function schedRefresh(userId = getUserId()) {
@@ -774,7 +788,7 @@ async function schedRefresh(userId = getUserId()) {
     memoryEl.schedList.replaceChildren(...list.map(schedItem));
     memoryEl.schedCount.textContent = list.length;
     memoryEl.schedStatus.textContent = list.length ? ''
-      : 'No refill schedules yet - they are created automatically from your confirmed orders.';
+      : 'No refill schedules yet - they are created from your confirmed orders, or ask Siru in chat to set one.';
   } catch (error) {
     if (getUserId() !== userId) return;
     if (schedShownFor !== userId) { memoryEl.schedList.replaceChildren(); memoryEl.schedCount.textContent = '–'; }

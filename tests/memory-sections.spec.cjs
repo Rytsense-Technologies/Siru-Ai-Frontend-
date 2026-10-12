@@ -314,7 +314,7 @@ test('empty categories are honest empty states', async ({ page }) => {
     return {addr: memoryEl.addrStatus.textContent, sched: memoryEl.schedStatus.textContent};
   });
   expect(text.addr).toContain('No saved addresses');
-  expect(text.sched).toBe('No refill schedules yet - they are created automatically from your confirmed orders.');
+  expect(text.sched).toBe('No refill schedules yet - they are created from your confirmed orders, or ask Siru in chat to set one.');
 });
 
 test('a saved address can be picked when the device location is blocked - labelled as saved, not current', async ({ page }) => {
