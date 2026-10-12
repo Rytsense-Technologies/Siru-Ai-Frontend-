@@ -43,8 +43,10 @@ test('an empty conversation offers questions; one sends that question as the use
     'How do I upload a prescription?']);
 
   // The first sign-in asks for a location before anything else: the page's own save, as a choice in it would.
+  // (location-ui.js locationStart opens it after an async permission check: waited for, never raced - on a
+  // slower machine a fixed wait closed it before it opened, and it then covered the suggestions.)
   const locationDialog = page.locator('#locationDialog');
-  await locationDialog.waitFor({state: 'visible', timeout: 3000}).catch(() => {});
+  await expect(locationDialog).toBeVisible({timeout: 15000});
   await page.evaluate(() => {
     locationSave({source: 'device', lat: 13.0418, lng: 80.2341, accuracy: 20, label: 'Current location'});
     document.getElementById('locationDialog').close();
