@@ -16,7 +16,9 @@ const DATA = {
     month: {orders: 60, grossPaise: 1200000, netPayoutPaise: 1080000}, settlements: {count: 2, settledPaise: 500000}},
   orders: {data: [
     {number: 'ORD-2', status: 'PACKING', paymentStatus: 'PENDING', paymentMethod: 'COD', items: 2, totalPaise: 30950, payoutPaise: 27855, at: '2026-10-12T09:30:00+05:30'},
-    {number: 'ORD-1', status: 'DELIVERED', paymentStatus: 'PAID', paymentMethod: 'UPI', items: 1, totalPaise: 12000, payoutPaise: 10800, at: '2026-10-12T09:00:00+05:30'}],
+    {number: 'ORD-1', status: 'DELIVERED', paymentStatus: 'PAID', paymentMethod: 'UPI', items: 1, totalPaise: 12000, payoutPaise: 10800, at: '2026-10-12T09:00:00+05:30'},
+    // Cancelled before payment (local client data, 12 Oct: "Cancelled · Payment pending" read as money owed).
+    {number: 'ORD-0', status: 'CANCELLED', paymentStatus: 'PENDING', paymentMethod: 'COD', items: 1, totalPaise: 7200, payoutPaise: 0, at: '2026-10-12T08:00:00+05:30'}],
     meta: {total: 90}},
   'top-items': {window: 'week', items: []},
   'low-stock': {data: [{id: 'i1', name: 'Test antibiotic', category: 'Antibiotic', brand: null, stockStatus: 'LOW_STOCK', qty: 3,
@@ -75,7 +77,10 @@ test('a list cut at the API\'s limit says how many there are; unpaid and prescri
   await openAsMerchant(page);
   await page.locator('[data-mview="orders"]').click();
   const body = page.locator('#merchantBody');
-  await expect(body).toContainText('Showing the latest 2 of 90 orders');
+  await expect(body).toContainText('Showing the latest 3 of 90 orders');
+  const cancelled = body.locator('.m-row').filter({hasText: 'ORD-0'});
+  await expect(cancelled).toContainText('Cancelled');
+  await expect(cancelled).not.toContainText('Payment');            // nothing to pay on a cancelled order
   const unpaid = body.locator('.m-row').filter({hasText: 'ORD-2'});
   await expect(unpaid).toContainText('Payment pending');
   await expect(unpaid).toContainText('Items: 2');
