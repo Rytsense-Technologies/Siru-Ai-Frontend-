@@ -223,6 +223,26 @@ class PageStructureTest(unittest.TestCase):
                 self.assertNotIn(obsolete, source, f"{name}: {obsolete}")
         self.assertIn("key.startsWith('siru_language_')) localStorage.removeItem(key)", scripts["users.js"])
 
+    def test_conversations_are_kept_per_tab_not_on_the_device(self):
+        """Live E2E (12 Oct): the chat (health details too) and the Inspector's
+        activity stayed in localStorage after the tab closed. They are kept per
+        tab (sessionStorage), like the login token; transcripts an older build
+        left in localStorage are removed on load. tests/sign-in-history.spec.cjs
+        checks the behaviour in a browser."""
+        users = (FRONTEND / "users.js").read_text(encoding="utf-8")
+        shopping = (FRONTEND / "shopping.js").read_text(encoding="utf-8")
+        for line in ("userRead(`siru_sessions_${id}`, [], sessionStorage)",
+                     "userRead(chatKey(id, sessionId), [], sessionStorage)",
+                     "userWrite(chatKey(id, sessionId), messages, sessionStorage);",
+                     "userDropLegacyTranscripts();"):
+            self.assertIn(line, users)
+        self.assertIn("const TRANSCRIPT_PREFIXES = ['siru_chat_', 'siru_sessions_', 'siru_activity_'];", users)
+        reads = re.findall(r"userRead\(activityKey\(\), \[\][^)]*\)", shopping)
+        writes = re.findall(r"userWrite\(activityKey\(\),[^\n]*", shopping)
+        self.assertTrue(reads and writes)
+        for call in reads + writes:
+            self.assertIn("sessionStorage", call, call)
+
     def test_voice_listens_only_once_the_assistant_has_joined(self):
         """Speech before the voice worker joins the room is heard by nobody:
         the page says it is connecting until the assistant is in the call."""

@@ -68,19 +68,19 @@ test('the same user signing in on a second tab keeps the first tab\'s chat and a
   const tabA = await open(context);
   await signIn(tabA, 'user-a');
   await chat(tabA, 'I need Dolo 650');
-  const before = mine(await keys(tabA), 'user-a');
+  const before = mine(await keys(tabA, 'sessionStorage'), 'user-a');  // kept per tab (live E2E, 12 Oct)
   expect(before.filter(k => k.startsWith('siru_chat_'))).toHaveLength(1);
   expect(before.filter(k => k.startsWith('siru_activity_'))).toHaveLength(1);
 
   const tabB = await open(context);
   await signIn(tabB, 'user-a');
-  expect(mine(await keys(tabA), 'user-a')).toEqual(expect.arrayContaining(before));  // nothing of user-a's removed
+  expect(mine(await keys(tabA, 'sessionStorage'), 'user-a')).toEqual(expect.arrayContaining(before));  // nothing of user-a's removed
 
   await tabA.reload();
   await tabA.waitForLoadState('load');
   await expect(tabA.locator('#chatMessages .chat-turn')).toHaveCount(1);
   await expect(tabA.locator('#chatMessages')).toContainText('I need Dolo 650');
-  expect(await tabA.evaluate(() => JSON.parse(localStorage.getItem(activityKey()) || '[]').length)).toBe(1);
+  expect(await tabA.evaluate(() => JSON.parse(sessionStorage.getItem(activityKey()) || '[]').length)).toBe(1);
   expect(await tabA.evaluate(() => shopEl.activityList.children.length)).toBeGreaterThan(0);  // the Inspector's activity, shown
 });
 
@@ -145,4 +145,35 @@ test('signing out still removes everything, the user\'s own included', async ({ 
   await tab.evaluate(() => signOut());
   expect(await keys(tab)).toEqual([]);
   expect(await keys(tab, 'sessionStorage')).toEqual([]);
+});
+
+// Live E2E (12 Oct): what was said (health details too) stayed in localStorage after the tab closed. The
+// conversation and the Inspector's activity are now kept per tab: a reload keeps them, a closed tab leaves
+// nothing behind, and transcripts an older build left in localStorage are removed on load.
+test('a closed tab leaves no conversation on the device; a reload keeps it', async ({ context }) => {
+  const tabA = await open(context);
+  await signIn(tabA, 'user-a');
+  await chat(tabA, 'I have chest pain');
+  expect(mine(await keys(tabA), 'user-a')).toEqual([]);                       // nothing in localStorage
+  await tabA.reload();
+  await tabA.waitForLoadState('load');
+  await expect(tabA.locator('#chatMessages')).toContainText('I have chest pain');
+  await tabA.close();
+  const tabB = await open(context);                                            // a new tab: its own sessionStorage
+  expect(mine([...await keys(tabB), ...await keys(tabB, 'sessionStorage')], 'user-a')).toEqual([]);
+});
+
+test('transcripts an older build left in localStorage are removed on load; settings stay', async ({ context }) => {
+  const uuid = '11111111-2222-3333-4444-555555555555';
+  const tab = await open(context);
+  await tab.evaluate(uuid => {
+    localStorage.setItem(`siru_chat_a_${uuid}`, '[{"text": "health details"}]');
+    localStorage.setItem(`siru_activity_a_${uuid}`, '[]');
+    localStorage.setItem('siru_sessions_a', '[]');
+    localStorage.setItem('pharmacy_api_base', 'http://127.0.0.1:8010');
+  }, uuid);
+  await tab.reload();
+  await tab.waitForLoadState('load');
+  expect(await keys(tab)).toEqual([]);
+  expect(await tab.evaluate(() => localStorage.getItem('pharmacy_api_base'))).toBe('http://127.0.0.1:8010');
 });

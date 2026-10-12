@@ -1605,6 +1605,7 @@ const ROUTE_LABELS = {
 const ACTIVITY_LIMIT = 100;
 // The tool activity of the session on screen (users.js: a sign-in starts a
 // new one), so it matches the chat next to it.
+// Kept for this tab only (sessionStorage, users.js TRANSCRIPT_PREFIXES): it holds what was said - health details too.
 const activityKey = () => `siru_activity_${getUserId()}_${shoppingSessionId}`;
 
 // The chat session: created the moment the user actually says something
@@ -1914,8 +1915,8 @@ function noiseEntry({noise_id, text, reason, at}) {
 
 function shoppingNoiseEvent(message) {
   shopEl.activityList.prepend(noiseEntry(message));
-  const saved = userRead(activityKey(), []);
-  userWrite(activityKey(), [...saved, {...message, kind: 'noise'}].slice(-ACTIVITY_LIMIT));
+  const saved = userRead(activityKey(), [], sessionStorage);
+  userWrite(activityKey(), [...saved, {...message, kind: 'noise'}].slice(-ACTIVITY_LIMIT), sessionStorage);
   activityCounts();
 }
 
@@ -1979,7 +1980,7 @@ function dataRender(items) {
 
 // The header: this conversation's requests, tool calls, tables and model use.
 function inspectorSummary() {
-  const items = getUserId() ? userRead(activityKey(), []).filter(item => item.kind !== 'noise' && item.trace) : [];
+  const items = getUserId() ? userRead(activityKey(), [], sessionStorage).filter(item => item.kind !== 'noise' && item.trace) : [];
   const tables = dataRender(items);
   const steps = items.flatMap(item => item.trace.steps || []);
   const tools = steps.filter(step => step.kind === 'tool');
@@ -2177,17 +2178,17 @@ function shoppingActivityAdd(turn, trace) {
   const item = {turn_id: turn.id, user: turn.record.user, source: turn.record.source || 'text',
     timestamp: new Date().toISOString(), trace, reply: turn.record.reply || '',
     card_kinds: (turn.record.cards || []).map(card => card?.kind).filter(Boolean)};
-  const saved = userRead(activityKey(), []).filter(entry => entry.turn_id !== turn.id);
-  userWrite(activityKey(), [...saved, item].slice(-ACTIVITY_LIMIT));
+  const saved = userRead(activityKey(), [], sessionStorage).filter(entry => entry.turn_id !== turn.id);
+  userWrite(activityKey(), [...saved, item].slice(-ACTIVITY_LIMIT), sessionStorage);
   activityRender(item);
   inspectorSelect(turn.id);
 }
 
 function activityRestore() {
   shopEl.activityList.replaceChildren();
-  if (getUserId()) userRead(activityKey(), []).forEach(activityRender);
+  if (getUserId()) userRead(activityKey(), [], sessionStorage).forEach(activityRender);
   activityCounts();
-  inspectorSelect((getUserId() ? userRead(activityKey(), []).filter(item => item.trace).at(-1)?.turn_id : null) || null);
+  inspectorSelect((getUserId() ? userRead(activityKey(), [], sessionStorage).filter(item => item.trace).at(-1)?.turn_id : null) || null);
 }
 
 function flash(node) {
@@ -2362,7 +2363,7 @@ async function integrationRender() {
   const status = el_('div', 'integration-checks');
   status.append(el_('p', 'muted small', 'Checking…'));
   view.append(status);
-  const items = getUserId() ? userRead(activityKey(), []).filter(item => item.kind !== 'noise' && item.trace) : [];
+  const items = getUserId() ? userRead(activityKey(), [], sessionStorage).filter(item => item.kind !== 'noise' && item.trace) : [];
   view.append(sectionHead('Tools used in this conversation', 'with where they ran and the tables they touched'));
   const tools = new Map();
   for (const item of items) for (const call of item.trace.io?.calls || []) {
@@ -2454,11 +2455,11 @@ function shoppingMemoryEvent({turn_id, status = 'saved', count = 0, short_term =
     steps.push({kind: 'memory', store: 'redis', status: short_term === 'saved' ? 'done' : 'error',
       name: short_term === 'saved' ? 'short-term saved' : 'short-term save failed'});
   }
-  const saved = userRead(activityKey(), []);
+  const saved = userRead(activityKey(), [], sessionStorage);
   const item = saved.find(entry => entry.turn_id === turn_id);
   if (item) {
     item.trace.steps = [...(item.trace.steps || []), ...steps];
-    userWrite(activityKey(), saved);
+    userWrite(activityKey(), saved, sessionStorage);
     inspectorSummary();
   }
   const rows = shopEl.activityList.querySelector(`.agent-activity[data-turn-id="${CSS.escape(turn_id)}"] .trace-rows`);
@@ -2609,7 +2610,7 @@ function turnRestore(record) {
   const time = record.replied_at || record.timestamp;
   if (record.activity?.length) turn.el.append(turnActivityRestore(record));
   if (record.reply) {
-    const trace = record.has_trace ? {steps: userRead(activityKey(), []).find(item => item.turn_id === record.id)?.trace?.steps || []} : null;
+    const trace = record.has_trace ? {steps: userRead(activityKey(), [], sessionStorage).find(item => item.turn_id === record.id)?.trace?.steps || []} : null;
     turnReply(turn, record.reply, {agent: record.agent, status: record.status, trace, time});
   } else if (record.status === 'dropped') turnNote(turn, 'Not answered: a newer request was answered first.');
   else if (record.status === 'failed') turnNote(turn, "Siru couldn't answer this. Please try again.");

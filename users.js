@@ -65,6 +65,18 @@ function userForgetOthers(userId) {
   for (const key of [...userMemory.keys()]) if (other(key)) userMemory.delete(key);
 }
 
+// Older builds kept conversations, session lists and activity in localStorage, where they outlived the tab:
+// removed on load (every user's - this tab's own copies are in sessionStorage). Nothing else is touched.
+const TRANSCRIPT_PREFIXES = ['siru_chat_', 'siru_sessions_', 'siru_activity_'];
+function userDropLegacyTranscripts() {
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (TRANSCRIPT_PREFIXES.some(prefix => key.startsWith(prefix))) localStorage.removeItem(key);
+    }
+  } catch {}
+}
+userDropLegacyTranscripts();
+
 function sessionValid(session) {
   return Boolean(session?.access_token && session?.user?.id && session.expires_at * 1000 > Date.now());
 }
@@ -102,24 +114,27 @@ function currentProfile() {
 }
 
 // Chat is per user AND per session. Signing in starts a new session, so the
-// chat on screen always starts empty; earlier sessions are kept on this
-// device (siru_chat_<user>_<session>, listed in siru_sessions_<user>) and
-// simply not shown. Memory, cart and orders are per user and untouched by
-// this - they live on the server and outlive every session.
+// chat on screen always starts empty. The conversation, its session list and the
+// Inspector's activity are kept for this tab only (sessionStorage, like the login
+// token and the session pointer): a reload keeps them, another tab - even the same
+// user's - never touches them, and closing the tab drops them, so what was said
+// (health details too) is not left on the device after the tab is closed (live E2E,
+// 12 Oct: kept in localStorage until sign-out). Memory, cart and orders are per user
+// and untouched by this - they live on the server and outlive every session.
 const SESSION_HISTORY_LIMIT = 50;
 
 function chatKey(id, sessionId) { return `siru_chat_${id}_${sessionId}`; }
 function currentSessionKey(id) { return `siru_current_session_${id}`; }
 
 // Every session this user has had on this device, oldest first.
-function userSessions(id) { return id ? userRead(`siru_sessions_${id}`, []) : []; }
+function userSessions(id) { return id ? userRead(`siru_sessions_${id}`, [], sessionStorage) : []; }
 
 // A new, empty chat session. Created when the user actually starts talking
 // or typing - signing in alone doesn't make one.
 function userStartSession(id) {
   if (!id) return null;
   const session = {id: crypto.randomUUID(), started_at: new Date().toISOString()};
-  userWrite(`siru_sessions_${id}`, [...userSessions(id), session].slice(-SESSION_HISTORY_LIMIT));
+  userWrite(`siru_sessions_${id}`, [...userSessions(id), session].slice(-SESSION_HISTORY_LIMIT), sessionStorage);
   userWrite(currentSessionKey(id), session.id, sessionStorage);
   return session.id;
 }
@@ -146,7 +161,7 @@ function userEndSession(id) {
 // The messages of the session on screen - empty in a new one.
 function userHistory(id) {
   const sessionId = userSession(id);
-  return sessionId ? userRead(chatKey(id, sessionId), []) : [];
+  return sessionId ? userRead(chatKey(id, sessionId), [], sessionStorage) : [];
 }
 
 function userSaveMessage(id, message) {
@@ -156,5 +171,5 @@ function userSaveMessage(id, message) {
   const messages = userHistory(id);
   const index = messages.findIndex(item => item.id === message.id);
   if (index < 0) messages.push(message); else messages[index] = message;
-  userWrite(chatKey(id, sessionId), messages);
+  userWrite(chatKey(id, sessionId), messages, sessionStorage);
 }

@@ -135,7 +135,7 @@ test("on a profile switch without a sign-out, A's late typed reply is kept in A'
     heldTurn({message: reply, trace: {agent: 'care_agent', steps: []}, cards: []});
     await turnA;
     await new Promise(resolve => setTimeout(resolve, 50));
-    const keptForA = JSON.stringify(userRead(`siru_chat_patient-a_${userRead('siru_current_session_patient-a', null, sessionStorage)}`, []));
+    const keptForA = JSON.stringify(userRead(`siru_chat_patient-a_${userRead('siru_current_session_patient-a', null, sessionStorage)}`, [], sessionStorage));
     return {screen: onScreen(), user: getUserId(), keptForA, historyB: JSON.stringify(userHistory('patient-b'))};
   }, A_REPLY);
   expect(after.user).toBe(B);
