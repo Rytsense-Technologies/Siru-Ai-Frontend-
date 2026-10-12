@@ -177,6 +177,18 @@ function merchantPanelError(err) {
   return PAGE_STATES[err?.detail?.code] || merchantErrorText(err);
 }
 
+// What the page says once, and what to do about it. no_store: the sign-in works,
+// but its user id owns no store in the client database - the account's name in
+// the heading is the configured account name, not a store that was found.
+const PAGE_ACTIONS = {
+  no_store: 'This sign-in is not linked to a store owner yet - ask your Siru administrator to link it to your store.',
+};
+
+function merchantPageNotice(err) {
+  const action = PAGE_ACTIONS[err?.detail?.code];
+  return `${merchantErrorText(err)}${action ? ` ${action}` : ''} Nothing on this page is estimated.`;
+}
+
 function merchantPanelTone(err) {
   return err?.detail?.code === 'no_store' || err?.detail?.code === 'several_stores' ? 'muted' : 'error';
 }
@@ -330,7 +342,7 @@ async function merchantOverview() {
   if (!merchantEl.merchantBody.contains(tiles)) return;  // left the page meanwhile
   const failed = [...results, catalog].filter(r => r?.error);
   const notConnected = failed.find(r => merchantNotConnected(r.error));
-  merchantNotice(notConnected ? `${merchantErrorText(notConnected.error)} Nothing on this page is estimated.` : '');
+  merchantNotice(notConnected ? merchantPageNotice(notConnected.error) : '');
   if (failed.length === results.length + 1) {
     tiles.replaceChildren();
     return;
@@ -396,7 +408,7 @@ async function merchantSectionView(view) {
   }
   const result = await mFill(panel, view.section, merchantRender[view.section], query);
   if (merchantEl.merchantBody.contains(panel)) merchantNotice(merchantNotConnected(result?.error)
-    ? `${merchantErrorText(result.error)} Nothing on this page is estimated.` : '');
+    ? merchantPageNotice(result.error) : '');
 }
 
 // The store's own name (the dashboard figures), once known: the heading and the sidebar.

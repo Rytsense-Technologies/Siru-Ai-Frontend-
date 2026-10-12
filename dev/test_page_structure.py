@@ -358,9 +358,9 @@ class PageStructureTest(unittest.TestCase):
 
         page = (FRONTEND / "index.html").read_text(encoding="utf-8")
         versions = set(re.findall(r'\.(?:js|css)\?v=(\d+)"', page))
-        self.assertEqual(versions, {"74"})   # one past main's v=73 - never a downgrade
-        self.assertIn('<script src="memory.js?v=74"></script>', page)
-        self.assertIn('<script src="version.js?v=74"></script>', page)
+        self.assertEqual(versions, {"75"})   # one past main's v=74 - never a downgrade
+        self.assertIn('<script src="memory.js?v=75"></script>', page)
+        self.assertIn('<script src="version.js?v=75"></script>', page)
 
     def test_a_refill_schedule_asked_for_in_chat_shows_its_interval_not_an_order(self):
         """A schedule asked for in chat ("refill Telma 40 every month", 12 Oct) has no order, tablets or dose:
@@ -370,6 +370,36 @@ class PageStructureTest(unittest.TestCase):
         self.assertIn("every === 1 ? `Every ${unit}` : `Every ${every} ${unit}s`", memory)
         self.assertIn("row.append(el_('p', 'muted small', `Next refill: ${est.next_refill_date}.`));", memory)
         self.assertLess(memory.index("if (schedule.interval) {"), memory.index("order ${schedule.order_id}"))
+
+    def test_the_merchant_dashboard_requests_the_backends_own_routes(self):
+        """The six sections are read from GET /v1/merchant/{section} - the backend's routes (api/routes/merchant.py)
+        on the configured API origin, with the signed-in token (apiFetch). A 404 there with {"code": "no_store"} is
+        the client database saying this account's id owns no store (12 Oct: every section 404 for a merchant whose
+        configured id owns no store) - said on the page, never a wrong URL."""
+        import re
+
+        merchant = (FRONTEND / "merchant.js").read_text(encoding="utf-8")
+        self.assertIn("apiFetch(`/v1/merchant/${section}${query}`)", merchant)
+        self.assertIn("apiFetch('/v1/merchant/me/stores')", merchant)
+        # The views' sections, the overview's panels (['Today', 'dashboard'], ...) and the catalog's own read.
+        sections = (set(re.findall(r"section: '([a-z-]+)'", merchant))
+                    | set(re.findall(r"\['[A-Z][^']*', '([a-z-]+)'\]", merchant))
+                    | set(re.findall(r"merchantFetch\('([a-z-]+)'", merchant)))
+        self.assertEqual(sections, {"dashboard", "earnings", "orders", "top-items", "low-stock", "catalog"})
+        # Never a merchant path without the API's version prefix.
+        self.assertIsNone(re.search(r"[`'\"]/merchant/", merchant))
+        self.assertIn("no_store: 'No store registered for this account.',", merchant)
+
+    def test_a_merchant_without_a_store_is_told_what_to_do(self):
+        """12 Oct, production: "Welcome, <store>" over six "no store" panels - the heading is the account's configured
+        name, the 404 is the client database saying its id owns no store. The page notice says both and the next step,
+        for the overview and for each section view; nothing is estimated."""
+        merchant = (FRONTEND / "merchant.js").read_text(encoding="utf-8")
+        self.assertIn("no_store: 'This sign-in is not linked to a store owner yet - ask your Siru administrator to link "
+                      "it to your store.',", merchant)
+        self.assertEqual(merchant.count("merchantNotice(notConnected ? merchantPageNotice(notConnected.error) : '')"), 1)
+        self.assertEqual(merchant.count("? merchantPageNotice(result.error) : ''"), 1)
+        self.assertNotIn("Nothing on this page is estimated.` : ''", merchant)  # no notice skips the action line
 
 if __name__ == "__main__":
     unittest.main()
